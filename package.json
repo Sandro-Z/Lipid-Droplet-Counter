@@ -1,0 +1,69 @@
+{
+  "name": "lipid-droplet-counter",
+  "version": "1.0.0",
+  "description": "Desktop app for live-cell lipid droplet counting.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win portable --x64",
+    "build:mac": "electron-builder --mac dmg --arm64"
+  },
+  "build": {
+    "appId": "com.local.lipiddropletcounter",
+    "productName": "Lipid Droplet Counter",
+    "files": [
+      "index.html",
+      "styles.css",
+      "app.js",
+      "main.js",
+      "preload.js"
+    ],
+    "extraResources": [
+      {
+        "from": "cell_segmenter.py",
+        "to": "cell_segmenter.py"
+      },
+      {
+        "from": "requirements.txt",
+        "to": "requirements.txt"
+      },
+      {
+        "from": "install_sam_dependencies.sh",
+        "to": "install_sam_dependencies.sh"
+      },
+      {
+        "from": "install_sam_dependencies.ps1",
+        "to": "install_sam_dependencies.ps1"
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "electronDownload": {
+      "cache": "./.electron-cache"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false,
+      "artifactName": "Lipid-Droplet-Counter-${version}-Windows-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "artifactName": "Lipid-Droplet-Counter-${version}-macOS-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}

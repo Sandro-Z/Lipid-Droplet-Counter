@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>脂滴计数</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <div>
+            <h1>脂滴计数</h1>
+            <p id="fileMeta">等待上传图像</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="button primary" for="fileInput" title="上传图像">
+            <span aria-hidden="true">+</span>
+            上传
+          </label>
+          <button id="analyzeButton" class="button strong" type="button" disabled>分析</button>
+          <button id="exportCsvButton" class="icon-button" type="button" title="导出脂滴坐标 CSV" disabled aria-label="导出脂滴坐标 CSV">
+            坐标
+          </button>
+          <button id="exportPngButton" class="icon-button" type="button" title="导出脂滴标记图" disabled aria-label="导出脂滴标记图">
+            标记
+          </button>
+        </div>
+        <input id="fileInput" type="file" accept="image/*,.tif,.tiff" />
+      </header>
+
+      <main class="layout">
+        <aside id="leftPanel" class="panel controls">
+          <button id="leftToggleButton" class="splitter-toggle left" type="button" title="折叠左侧栏">‹</button>
+          <section>
+            <div class="section-title">
+              <h2>模式</h2>
+              <button id="autoButton" type="button" class="ghost-button" disabled>自动</button>
+            </div>
+            <div class="segmented" role="group" aria-label="分析模式">
+              <button class="segment active" type="button" data-setting="mode" data-value="brightfield">明场圆滴</button>
+              <button class="segment" type="button" data-setting="mode" data-value="fluorescence">荧光亮点</button>
+            </div>
+            <label class="field">
+              <span>通道</span>
+              <select id="channelSelect">
+                <option value="luma">亮度</option>
+                <option value="red">红</option>
+                <option value="green">绿</option>
+                <option value="blue">蓝</option>
+              </select>
+            </label>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>分割</h2>
+              <label class="switch">
+                <input id="autoThresholdInput" type="checkbox" checked />
+                <span>自动阈值</span>
+              </label>
+            </div>
+            <label class="range-field">
+              <span>阈值 <b id="thresholdValue">48</b></span>
+              <input id="thresholdInput" type="range" min="0" max="255" value="48" />
+            </label>
+            <label class="range-field">
+              <span>灵敏度 <b id="sensitivityValue">1.00</b></span>
+              <input id="sensitivityInput" type="range" min="0.55" max="1.55" value="1" step="0.05" />
+            </label>
+            <label class="range-field">
+              <span>背景半径 <b id="backgroundValue">20 px</b></span>
+              <input id="backgroundInput" type="range" min="3" max="90" value="20" step="1" />
+            </label>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>筛选</h2>
+            </div>
+            <div class="number-grid">
+              <label class="field">
+                <span>最小直径</span>
+                <input id="minDiameterInput" type="number" min="1" max="999" value="6" />
+              </label>
+              <label class="field">
+                <span>最大直径</span>
+                <input id="maxDiameterInput" type="number" min="2" max="2000" value="58" />
+              </label>
+            </div>
+            <label class="range-field">
+              <span>最小圆度 <b id="circularityValue">0.32</b></span>
+              <input id="circularityInput" type="range" min="0" max="1" value="0.32" step="0.02" />
+            </label>
+            <label class="range-field">
+              <span>边缘忽略 <b id="edgeValue">4 px</b></span>
+              <input id="edgeInput" type="range" min="0" max="80" value="4" step="1" />
+            </label>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>视图</h2>
+              <button id="roiButton" type="button" class="ghost-button" disabled>框选 ROI</button>
+            </div>
+            <button id="clearRoiButton" type="button" class="wide-button" disabled>清除 ROI</button>
+            <label class="range-field">
+              <span>缩放 <b id="zoomValue">100%</b></span>
+              <input id="zoomInput" type="range" min="10" max="800" value="100" step="5" />
+            </label>
+            <label class="range-field">
+              <span>叠加 <b id="overlayValue">62%</b></span>
+              <input id="overlayInput" type="range" min="0" max="100" value="62" step="1" />
+            </label>
+            <label class="switch">
+              <input id="labelsInput" type="checkbox" />
+              <span>编号</span>
+            </label>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>手动修正</h2>
+              <span id="manualBadge" class="badge">+0 / -0</span>
+            </div>
+            <div class="segmented correction-segmented" role="group" aria-label="修正模式">
+              <button class="segment active" type="button" data-correction-mode="none">查看</button>
+              <button class="segment" type="button" data-correction-mode="add">补点</button>
+              <button class="segment" type="button" data-correction-mode="remove">删除</button>
+            </div>
+            <label class="range-field">
+              <span>点选直径 <b id="manualDiameterValue">12 px</b></span>
+              <input id="manualDiameterInput" type="range" min="3" max="90" value="12" step="1" />
+            </label>
+            <div class="button-row">
+              <button id="undoManualButton" type="button" class="wide-button" disabled>撤销</button>
+              <button id="clearManualButton" type="button" class="wide-button" disabled>清空修正</button>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>细胞轮廓</h2>
+              <span id="cellBadge" class="badge">未识别</span>
+            </div>
+            <div class="button-grid">
+              <button id="autoCellButton" type="button" class="wide-button" disabled>自动识别</button>
+              <button id="samPointButton" type="button" class="wide-button" disabled>SAM 点选</button>
+            </div>
+            <div class="button-grid">
+              <button id="boxCellButton" type="button" class="wide-button" disabled>SAM 框选</button>
+              <button id="refineCellButton" type="button" class="wide-button" disabled>SAM 预测</button>
+            </div>
+            <div class="button-grid">
+              <button id="undoCellPointButton" type="button" class="wide-button" disabled>撤销上一个点</button>
+              <button id="drawCellButton" type="button" class="wide-button" disabled>绘制轮廓</button>
+            </div>
+            <div class="button-grid">
+              <button id="finishCellButton" type="button" class="wide-button" disabled>闭合轮廓</button>
+              <button id="clearCellButton" type="button" class="wide-button" disabled>清除轮廓</button>
+            </div>
+            <div class="section-title sub-title">
+              <h2>蒙版编辑</h2>
+              <span id="maskBadge" class="badge">0 px</span>
+            </div>
+            <div class="button-grid">
+              <button id="maskEditButton" type="button" class="wide-button" disabled>手动蒙版</button>
+              <button id="clearMaskButton" type="button" class="wide-button" disabled>清除擦除</button>
+            </div>
+            <label class="range-field compact-range">
+              <span>笔刷 <b id="eraseBrushValue">36 px</b></span>
+              <input id="eraseBrushInput" type="range" min="6" max="140" value="36" step="2" />
+            </label>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>历史记录</h2>
+              <span id="historyBadge" class="badge">0 / 20</span>
+            </div>
+            <div class="button-grid">
+              <button id="saveHistoryButton" type="button" class="wide-button" disabled>保存当前</button>
+              <button id="clearHistoryButton" type="button" class="wide-button" disabled>清空历史</button>
+            </div>
+            <div id="historyList" class="history-list">
+              <div class="history-empty">暂无记录</div>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>标定</h2>
+            </div>
+            <label class="field">
+              <span>µm / px</span>
+              <input id="micronInput" type="number" min="0" step="0.0001" placeholder="可选" />
+            </label>
+          </section>
+        </aside>
+
+        <div id="leftResizeHandle" class="resize-handle left" role="separator" aria-label="调整左侧栏宽度"></div>
+
+        <section class="viewer">
+          <div class="viewer-toolbar">
+            <div class="status-line" id="statusLine">拖入图像，或点击上传</div>
+            <div class="viewer-actions">
+              <button id="fitButton" type="button" class="ghost-button" disabled>适合窗口</button>
+              <button id="resetButton" type="button" class="ghost-button" disabled>重置</button>
+            </div>
+          </div>
+          <div id="dropZone" class="canvas-stage">
+            <div id="emptyState" class="empty-state">
+              <div class="empty-visual" aria-hidden="true">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <h2>上传活细胞图像</h2>
+              <p>PNG、JPG、未压缩 TIFF</p>
+            </div>
+            <canvas id="imageCanvas"></canvas>
+          </div>
+        </section>
+
+        <div id="rightResizeHandle" class="resize-handle right" role="separator" aria-label="调整右侧栏宽度"></div>
+
+        <aside id="rightPanel" class="panel results">
+          <button id="rightToggleButton" class="splitter-toggle right" type="button" title="折叠右侧栏">›</button>
+          <section class="metrics">
+            <div class="metric">
+              <span>脂滴数量</span>
+              <strong id="countMetric">0</strong>
+            </div>
+            <div class="metric">
+              <span>平均直径</span>
+              <strong id="diameterMetric">--</strong>
+            </div>
+            <div class="metric">
+              <span>总面积</span>
+              <strong id="areaMetric">--</strong>
+            </div>
+            <div class="metric">
+              <span>密度</span>
+              <strong id="densityMetric">--</strong>
+            </div>
+            <div class="metric">
+              <span>细胞面积</span>
+              <strong id="cellAreaMetric">--</strong>
+            </div>
+            <div class="metric">
+              <span>脂滴/细胞面积</span>
+              <strong id="areaRatioMetric">--</strong>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-title">
+              <h2>信号分布</h2>
+              <span id="thresholdBadge" class="badge">阈值 --</span>
+            </div>
+            <canvas id="histogramCanvas" class="histogram" width="360" height="120"></canvas>
+          </section>
+
+          <section class="table-section">
+            <div class="section-title">
+              <h2>对象</h2>
+              <span id="objectBadge" class="badge">0 个</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>X</th>
+                    <th>Y</th>
+                    <th>直径</th>
+                    <th>圆度</th>
+                    <th>强度</th>
+                    <th>来源</th>
+                  </tr>
+                </thead>
+                <tbody id="objectTable">
+                  <tr>
+                    <td colspan="7" class="empty-cell">暂无结果</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
