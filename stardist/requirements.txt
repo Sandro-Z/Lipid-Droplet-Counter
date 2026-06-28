@@ -1,0 +1,10 @@
+tensorflow>=2
+stardist
+csbdeep
+numpy
+pandas
+scikit-image
+tifffile
+imageio
+matplotlib
+tqdm

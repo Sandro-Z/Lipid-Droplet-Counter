@@ -2,13 +2,11 @@
   const defaults = {
     mode: "brightfield",
     channel: "luma",
-    autoThreshold: true,
-    threshold: 48,
-    sensitivity: 1,
+    probabilityThreshold: 0.3,
+    nmsThreshold: 0.2,
     backgroundRadius: 20,
     minDiameter: 6,
     maxDiameter: 58,
-    minCircularity: 0.32,
     edgeMargin: 4,
     overlayOpacity: 0.62,
     zoom: 100,
@@ -61,7 +59,13 @@
     eraseBrushSize: 36,
     isErasingMask: false,
     didPaintMask: false,
-    threshold: defaults.threshold,
+    threshold: null,
+    modelInfo: {
+      modelName: "lipid_droplet_stardist_dense_ft2",
+      modelLabel: "dense_ft2",
+      probThresh: defaults.probabilityThreshold,
+      nmsThresh: defaults.nmsThreshold,
+    },
     bounds: null,
     settings: { ...defaults },
     roi: null,
@@ -98,17 +102,14 @@
     "exportCsvButton",
     "exportPngButton",
     "channelSelect",
-    "autoThresholdInput",
-    "thresholdInput",
-    "thresholdValue",
-    "sensitivityInput",
-    "sensitivityValue",
+    "probabilityInput",
+    "probabilityValue",
+    "nmsInput",
+    "nmsValue",
     "backgroundInput",
     "backgroundValue",
     "minDiameterInput",
     "maxDiameterInput",
-    "circularityInput",
-    "circularityValue",
     "edgeInput",
     "edgeValue",
     "roiButton",
@@ -218,27 +219,22 @@
       scheduleAnalyze();
     });
 
-    els.autoThresholdInput.addEventListener("change", () => {
-      state.settings.autoThreshold = els.autoThresholdInput.checked;
-      els.thresholdInput.disabled = state.settings.autoThreshold;
+    els.probabilityInput.addEventListener("input", () => {
+      state.settings.probabilityThreshold = Number(els.probabilityInput.value) || defaults.probabilityThreshold;
+      syncReadouts();
       scheduleAnalyze();
     });
 
-    els.thresholdInput.addEventListener("input", () => {
-      state.settings.autoThreshold = false;
-      els.autoThresholdInput.checked = false;
-      els.thresholdInput.disabled = false;
-      state.settings.threshold = Number(els.thresholdInput.value);
-      els.thresholdValue.textContent = String(state.settings.threshold);
+    els.nmsInput.addEventListener("input", () => {
+      state.settings.nmsThreshold = Number(els.nmsInput.value) || defaults.nmsThreshold;
+      syncReadouts();
       scheduleAnalyze();
     });
 
     const analyzedInputs = [
-      [els.sensitivityInput, "sensitivity", Number],
       [els.backgroundInput, "backgroundRadius", Number],
       [els.minDiameterInput, "minDiameter", Number],
       [els.maxDiameterInput, "maxDiameter", Number],
-      [els.circularityInput, "minCircularity", Number],
       [els.edgeInput, "edgeMargin", Number],
       [els.micronInput, "micronPerPixel", Number],
     ];
@@ -275,9 +271,9 @@
 
     els.analyzeButton.addEventListener("click", () => analyzeImage());
     els.autoButton.addEventListener("click", () => {
-      state.settings.autoThreshold = true;
-      els.autoThresholdInput.checked = true;
-      els.thresholdInput.disabled = true;
+      state.settings.probabilityThreshold = defaults.probabilityThreshold;
+      state.settings.nmsThreshold = defaults.nmsThreshold;
+      syncControlsFromState();
       analyzeImage();
     });
 
@@ -338,6 +334,13 @@
     els.resetButton.addEventListener("click", () => {
       const keepMicron = state.settings.micronPerPixel;
       state.settings = { ...defaults, micronPerPixel: keepMicron };
+      state.threshold = null;
+      state.modelInfo = {
+        modelName: "lipid_droplet_stardist_dense_ft2",
+        modelLabel: "dense_ft2",
+        probThresh: state.settings.probabilityThreshold,
+        nmsThresh: state.settings.nmsThreshold,
+      };
       state.roi = null;
       state.tempRoi = null;
       state.cellMask = null;
@@ -355,6 +358,7 @@
       clearCorrections(false);
       setCorrectionMode("none", false);
       syncControlsFromState();
+      drawEmptyHistogram();
       scheduleAnalyze();
     });
 
@@ -417,7 +421,14 @@
       setMaskEditMode(false, false);
       setCellDrawMode(false, false);
       setCorrectionMode("none", false);
-      state.threshold = state.settings.threshold;
+      state.threshold = null;
+      state.modelInfo = {
+        modelName: "lipid_droplet_stardist_dense_ft2",
+        modelLabel: "dense_ft2",
+        probThresh: state.settings.probabilityThreshold,
+        nmsThresh: state.settings.nmsThreshold,
+      };
+      drawEmptyHistogram();
 
       els.imageCanvas.width = decoded.width;
       els.imageCanvas.height = decoded.height;
@@ -497,31 +508,27 @@
       await nextFrame();
       const signal = buildSignal(intensity, background, settings.mode);
       const histogram = buildHistogram(signal, width, bounds);
-      const threshold = settings.autoThreshold
-        ? autoThreshold(histogram, settings.mode, settings.sensitivity)
-        : settings.threshold;
-      const result = findObjects(signal, width, height, bounds, threshold, settings);
+      const result = await detectDroplets(bounds, settings);
 
       state.signal = signal;
       state.mask = result.mask;
       state.autoObjects = result.objects.map((object) => ({ ...object, source: "auto" }));
       state.histogram = histogram;
-      state.threshold = threshold;
+      state.threshold = null;
+      state.modelInfo = result.modelInfo;
       state.bounds = bounds;
       state.objects = composeObjects();
       refreshCellMaskAfterAnalysis();
 
-      if (settings.autoThreshold) {
-        state.settings.threshold = threshold;
-        els.thresholdInput.value = String(threshold);
-      }
-
       syncReadouts();
       renderCanvas();
-      drawHistogram(histogram, threshold);
+      drawHistogram(histogram, result.modelInfo);
       updateResults();
       updateButtonState();
-      setBusy(false, `完成：识别 ${state.autoObjects.length} 个对象，当前计数 ${state.objects.length} 个`);
+      setBusy(
+        false,
+        `完成：${result.modelInfo.modelLabel} 识别 ${state.autoObjects.length} 个对象，当前计数 ${state.objects.length} 个`
+      );
       saveHistoryDebounced();
     } catch (error) {
       console.error(error);
@@ -533,13 +540,11 @@
     const settings = {
       ...state.settings,
       channel: els.channelSelect.value,
-      autoThreshold: els.autoThresholdInput.checked,
-      threshold: clamp(Math.round(Number(els.thresholdInput.value) || 0), 0, 255),
-      sensitivity: clamp(Number(els.sensitivityInput.value) || defaults.sensitivity, 0.55, 1.55),
+      probabilityThreshold: clamp(Number(els.probabilityInput.value) || defaults.probabilityThreshold, 0.05, 0.95),
+      nmsThreshold: clamp(Number(els.nmsInput.value) || defaults.nmsThreshold, 0.05, 0.95),
       backgroundRadius: clamp(Math.round(Number(els.backgroundInput.value) || defaults.backgroundRadius), 0, 90),
       minDiameter: Math.max(1, Number(els.minDiameterInput.value) || defaults.minDiameter),
       maxDiameter: Math.max(2, Number(els.maxDiameterInput.value) || defaults.maxDiameter),
-      minCircularity: clamp(Number(els.circularityInput.value) || 0, 0, 1),
       edgeMargin: clamp(Math.round(Number(els.edgeInput.value) || 0), 0, 80),
       overlayOpacity: clamp(Number(els.overlayInput.value) / 100, 0, 1),
       zoom: clamp(Number(els.zoomInput.value) || 100, 10, 800),
@@ -684,7 +689,38 @@
     }
     return 255;
   }
+  async function detectDroplets(bounds, settings) {
+    if (!window.lipidDropletSegmentation?.stardistPredict) {
+      throw new Error("未找到 StarDist 推理桥接");
+    }
 
+    const result = await window.lipidDropletSegmentation.stardistPredict({
+      imagePng: sourceImageDataUrl(),
+      bounds,
+      channel: settings.channel,
+      minDiameter: settings.minDiameter,
+      maxDiameter: settings.maxDiameter,
+      probThresh: settings.probabilityThreshold,
+      nmsThresh: settings.nmsThreshold,
+      modelName: "lipid_droplet_stardist_dense_ft2",
+    });
+
+    if (!result?.ok) {
+      throw new Error(result?.error || "StarDist 识别失败");
+    }
+
+    return {
+      mask: decodeMaskRle(result.maskStart, result.maskRle, result.width, result.height),
+      objects: result.objects || [],
+      modelInfo: {
+        modelName: result.modelName || "lipid_droplet_stardist_dense_ft2",
+        modelLabel: result.modelLabel || "dense_ft2",
+        probThresh: Number.isFinite(result.probThresh) ? result.probThresh : settings.probabilityThreshold,
+        nmsThresh: Number.isFinite(result.nmsThresh) ? result.nmsThresh : settings.nmsThreshold,
+      },
+    };
+  }
+  
   function findObjects(signal, width, height, bounds, threshold, settings) {
     const total = width * height;
     const mask = new Uint8Array(total);
@@ -693,6 +729,7 @@
     const objects = [];
     const minDiameter = settings.minDiameter;
     const maxDiameter = settings.maxDiameter;
+    const minCircularity = Number.isFinite(settings.minCircularity) ? settings.minCircularity : 0;
 
     for (let y = bounds.y0; y < bounds.y1; y += 1) {
       let index = y * width + bounds.x0;
@@ -761,7 +798,7 @@
         const accepted =
           equivalentDiameter >= minDiameter &&
           equivalentDiameter <= maxDiameter &&
-          circularity >= settings.minCircularity;
+          circularity >= minCircularity;
 
         if (accepted) {
           objects.push({
@@ -2385,7 +2422,7 @@
     return { x, y, width, height };
   }
 
-  function drawHistogram(histogram, threshold) {
+  function drawHistogram(histogram, modelInfo = null) {
     const canvas = els.histogramCanvas;
     const ctx = canvas.getContext("2d");
     const width = canvas.width;
@@ -2405,21 +2442,16 @@
       ctx.fillRect(i * barWidth, height - barHeight - 8, Math.max(1, barWidth), barHeight);
     }
 
-    const x = (threshold / 255) * width;
-    ctx.strokeStyle = "#d67b28";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(x, 8);
-    ctx.lineTo(x, height - 8);
-    ctx.stroke();
-
-    els.thresholdBadge.textContent = `阈值 ${threshold}`;
+    if (modelInfo) {
+      els.thresholdBadge.textContent = `模型 ${modelInfo.modelLabel} · p ${modelInfo.probThresh.toFixed(2)} · nms ${modelInfo.nmsThresh.toFixed(2)}`;
+    } else {
+      els.thresholdBadge.textContent = "模型 --";
+    }
   }
 
   function drawEmptyHistogram() {
     const empty = new Uint32Array(256);
-    drawHistogram(empty, 0);
-    els.thresholdBadge.textContent = "阈值 --";
+    drawHistogram(empty, null);
   }
 
   function updateResults() {
@@ -2518,7 +2550,10 @@
       ["droplet_cell_area_ratio", summary.areaRatio.toFixed(6), ""],
       ["manual_added", state.manualObjects.length, ""],
       ["manual_removed", state.suppressedObjects.length, ""],
-      ["threshold", state.threshold, ""],
+      ["droplet_model_name", state.modelInfo?.modelName || "lipid_droplet_stardist_dense_ft2", ""],
+      ["droplet_model_label", state.modelInfo?.modelLabel || "dense_ft2", ""],
+      ["prob_threshold", state.modelInfo?.probThresh ?? state.settings.probabilityThreshold, ""],
+      ["nms_threshold", state.modelInfo?.nmsThresh ?? state.settings.nmsThreshold, ""],
       ["roi_x", state.bounds ? state.bounds.x0 : "", "px"],
       ["roi_y", state.bounds ? state.bounds.y0 : "", "px"],
       ["roi_width", state.bounds ? state.bounds.width : "", "px"],
@@ -2748,14 +2783,11 @@
       button.classList.toggle("active", button.dataset.value === settings.mode);
     });
     els.channelSelect.value = settings.channel;
-    els.autoThresholdInput.checked = settings.autoThreshold;
-    els.thresholdInput.disabled = settings.autoThreshold;
-    els.thresholdInput.value = String(settings.threshold);
-    els.sensitivityInput.value = String(settings.sensitivity);
+    els.probabilityInput.value = String(settings.probabilityThreshold);
+    els.nmsInput.value = String(settings.nmsThreshold);
     els.backgroundInput.value = String(settings.backgroundRadius);
     els.minDiameterInput.value = String(settings.minDiameter);
     els.maxDiameterInput.value = String(settings.maxDiameter);
-    els.circularityInput.value = String(settings.minCircularity);
     els.edgeInput.value = String(settings.edgeMargin);
     els.overlayInput.value = String(Math.round(settings.overlayOpacity * 100));
     els.zoomInput.value = String(settings.zoom);
@@ -2767,10 +2799,9 @@
   }
 
   function syncReadouts() {
-    els.thresholdValue.textContent = String(Math.round(state.settings.threshold));
-    els.sensitivityValue.textContent = Number(state.settings.sensitivity).toFixed(2);
+    els.probabilityValue.textContent = Number(state.settings.probabilityThreshold).toFixed(2);
+    els.nmsValue.textContent = Number(state.settings.nmsThreshold).toFixed(2);
     els.backgroundValue.textContent = `${Math.round(state.settings.backgroundRadius)} px`;
-    els.circularityValue.textContent = Number(state.settings.minCircularity).toFixed(2);
     els.edgeValue.textContent = `${Math.round(state.settings.edgeMargin)} px`;
     els.overlayValue.textContent = `${Math.round(state.settings.overlayOpacity * 100)}%`;
     els.zoomValue.textContent = `${Math.round(state.settings.zoom)}%`;
@@ -2958,6 +2989,13 @@
       state.signal = null;
       state.mask = null;
       state.histogram = null;
+      state.threshold = null;
+      state.modelInfo = {
+        modelName: "lipid_droplet_stardist_dense_ft2",
+        modelLabel: "dense_ft2",
+        probThresh: state.settings.probabilityThreshold,
+        nmsThresh: state.settings.nmsThreshold,
+      };
       state.autoObjects = [];
       state.manualObjects = (record.manualObjects || []).map((object) => ({ ...object }));
       state.suppressedObjects = (record.suppressedObjects || []).map((object) => ({ ...object }));
@@ -2991,6 +3029,7 @@
       els.emptyState.style.display = "none";
       els.fileMeta.textContent = `${state.source.name} · ${decoded.width}×${decoded.height}`;
       syncControlsFromState();
+      drawEmptyHistogram();
       scaleCanvas({ center: true });
       setCorrectionMode("none", false);
       setBusy(false, "历史记录已载入，正在复算...");

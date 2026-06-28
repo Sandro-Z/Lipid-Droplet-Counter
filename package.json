@@ -35,6 +35,14 @@
       {
         "from": "install_sam_dependencies.ps1",
         "to": "install_sam_dependencies.ps1"
+      },
+      {
+        "from": "droplet_segmenter.py",
+        "to": "droplet_segmenter.py"
+      },
+      {
+        "from": "models",
+        "to": "models"
       }
     ],
     "directories": {

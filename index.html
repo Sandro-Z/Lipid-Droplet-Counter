@@ -37,15 +37,15 @@
           <button id="leftToggleButton" class="splitter-toggle left" type="button" title="折叠左侧栏">‹</button>
           <section>
             <div class="section-title">
-              <h2>模式</h2>
-              <button id="autoButton" type="button" class="ghost-button" disabled>自动</button>
+              <h2>输入</h2>
+              <button id="autoButton" type="button" class="ghost-button" disabled>推荐参数</button>
             </div>
-            <div class="segmented" role="group" aria-label="分析模式">
-              <button class="segment active" type="button" data-setting="mode" data-value="brightfield">明场圆滴</button>
-              <button class="segment" type="button" data-setting="mode" data-value="fluorescence">荧光亮点</button>
+            <div class="segmented" role="group" aria-label="辅助信号模式">
+              <button class="segment active" type="button" data-setting="mode" data-value="brightfield">明场辅助</button>
+              <button class="segment" type="button" data-setting="mode" data-value="fluorescence">荧光辅助</button>
             </div>
             <label class="field">
-              <span>通道</span>
+              <span>识别通道</span>
               <select id="channelSelect">
                 <option value="luma">亮度</option>
                 <option value="red">红</option>
@@ -57,22 +57,19 @@
 
           <section>
             <div class="section-title">
-              <h2>分割</h2>
-              <label class="switch">
-                <input id="autoThresholdInput" type="checkbox" checked />
-                <span>自动阈值</span>
-              </label>
+              <h2>StarDist</h2>
+              <span class="badge">dense_ft2</span>
             </div>
             <label class="range-field">
-              <span>阈值 <b id="thresholdValue">48</b></span>
-              <input id="thresholdInput" type="range" min="0" max="255" value="48" />
+              <span>概率阈值 <b id="probabilityValue">0.30</b></span>
+              <input id="probabilityInput" type="range" min="0.05" max="0.95" value="0.3" step="0.05" />
             </label>
             <label class="range-field">
-              <span>灵敏度 <b id="sensitivityValue">1.00</b></span>
-              <input id="sensitivityInput" type="range" min="0.55" max="1.55" value="1" step="0.05" />
+              <span>NMS 阈值 <b id="nmsValue">0.20</b></span>
+              <input id="nmsInput" type="range" min="0.05" max="0.95" value="0.2" step="0.05" />
             </label>
             <label class="range-field">
-              <span>背景半径 <b id="backgroundValue">20 px</b></span>
+              <span>辅助背景半径 <b id="backgroundValue">20 px</b></span>
               <input id="backgroundInput" type="range" min="3" max="90" value="20" step="1" />
             </label>
           </section>
@@ -91,10 +88,6 @@
                 <input id="maxDiameterInput" type="number" min="2" max="2000" value="58" />
               </label>
             </div>
-            <label class="range-field">
-              <span>最小圆度 <b id="circularityValue">0.32</b></span>
-              <input id="circularityInput" type="range" min="0" max="1" value="0.32" step="0.02" />
-            </label>
             <label class="range-field">
               <span>边缘忽略 <b id="edgeValue">4 px</b></span>
               <input id="edgeInput" type="range" min="0" max="80" value="4" step="1" />
@@ -256,8 +249,8 @@
 
           <section>
             <div class="section-title">
-              <h2>信号分布</h2>
-              <span id="thresholdBadge" class="badge">阈值 --</span>
+              <h2>输入分布</h2>
+              <span id="thresholdBadge" class="badge">模型 --</span>
             </div>
             <canvas id="histogramCanvas" class="histogram" width="360" height="120"></canvas>
           </section>
