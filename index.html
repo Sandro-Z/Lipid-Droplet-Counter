@@ -156,8 +156,15 @@
               <button id="drawCellButton" type="button" class="wide-button" disabled>绘制轮廓</button>
             </div>
             <div class="button-grid">
-              <button id="finishCellButton" type="button" class="wide-button" disabled>闭合轮廓</button>
-              <button id="clearCellButton" type="button" class="wide-button" disabled>清除轮廓</button>
+              <button id="finishCellButton" type="button" class="wide-button" disabled>保存细胞</button>
+              <button id="clearCellButton" type="button" class="wide-button" disabled>删除选中</button>
+            </div>
+            <div class="section-title sub-title">
+              <h2>细胞列表</h2>
+              <span id="cellCountBadge" class="badge">0 个</span>
+            </div>
+            <div id="cellList" class="cell-list">
+              <div class="history-empty">暂无细胞</div>
             </div>
             <div class="section-title sub-title">
               <h2>蒙版编辑</h2>
@@ -224,6 +231,12 @@
 
         <aside id="rightPanel" class="panel results">
           <button id="rightToggleButton" class="splitter-toggle right" type="button" title="折叠右侧栏">›</button>
+          <section>
+            <div class="section-title">
+              <h2>当前细胞</h2>
+              <span id="selectedCellBadge" class="badge">全部对象</span>
+            </div>
+          </section>
           <section class="metrics">
             <div class="metric">
               <span>脂滴数量</span>

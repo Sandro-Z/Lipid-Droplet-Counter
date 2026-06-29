@@ -36,6 +36,9 @@
     manualObjects: [],
     suppressedObjects: [],
     objects: [],
+    cells: [],
+    selectedCellUid: null,
+    nextCellUid: 1,
     cellMask: null,
     cellContour: [],
     cellControlPoints: [],
@@ -143,6 +146,8 @@
     "drawCellButton",
     "finishCellButton",
     "clearCellButton",
+    "cellCountBadge",
+    "cellList",
     "maskBadge",
     "maskEditButton",
     "clearMaskButton",
@@ -169,6 +174,7 @@
     "histogramCanvas",
     "objectBadge",
     "objectTable",
+    "selectedCellBadge",
   ];
 
   function init() {
@@ -359,14 +365,10 @@
       };
       state.roi = null;
       state.tempRoi = null;
-      state.cellMask = null;
-      state.cellContour = [];
-      state.cellControlPoints = [];
-      state.cellContourSource = "none";
-      state.backgroundEraseMask = null;
-      state.samBox = null;
-      state.tempSamBox = null;
-      state.samHoverPoint = null;
+      state.cells = [];
+      state.selectedCellUid = null;
+      state.nextCellUid = 1;
+      clearActiveCellState();
       setMaskEditMode(false, false);
       setSamPointMode(false, false);
       setSamBoxMode(false, false);
@@ -414,16 +416,12 @@
       state.manualObjects = [];
       state.suppressedObjects = [];
       state.objects = [];
-      state.cellMask = null;
-      state.cellContour = [];
-      state.cellControlPoints = [];
-      state.cellContourSource = "none";
-      state.backgroundEraseMask = null;
+      state.cells = [];
+      state.selectedCellUid = null;
+      state.nextCellUid = 1;
+      clearActiveCellState();
       state.samPointMode = false;
       state.samBoxMode = false;
-      state.samBox = null;
-      state.tempSamBox = null;
-      state.samHoverPoint = null;
       state.samUnavailable = false;
       state.maskEditMode = false;
       state.currentHistoryId = null;
@@ -534,7 +532,7 @@
       state.modelInfo = result.modelInfo;
       state.bounds = bounds;
       state.objects = composeObjects();
-      refreshCellMaskAfterAnalysis();
+      ensureSelectedCell();
 
       syncReadouts();
       renderCanvas();
@@ -1262,37 +1260,212 @@
     return count;
   }
 
-  function countEffectiveCellPixels() {
-    if (!state.cellMask) return 0;
+  function clonePoints(points) {
+    return (points || []).map((point) => ({ ...point }));
+  }
+
+  function cloneMask(mask) {
+    return mask ? mask.slice() : null;
+  }
+
+  function cloneBox(box) {
+    return box ? { ...box } : null;
+  }
+
+  function clearActiveCellState() {
+    state.cellMask = null;
+    state.cellContour = [];
+    state.cellControlPoints = [];
+    state.cellContourSource = "none";
+    state.backgroundEraseMask = null;
+    state.samBox = null;
+    state.tempSamBox = null;
+    state.samHoverPoint = null;
+  }
+
+  function hasActiveCellDraft() {
+    return Boolean(state.cellMask || state.cellContour.length || state.cellControlPoints.length || state.samBox);
+  }
+
+  function selectedCellIndex() {
+    return state.cells.findIndex((cell) => cell.uid === state.selectedCellUid);
+  }
+
+  function getSelectedCell() {
+    const index = selectedCellIndex();
+    return index >= 0 ? state.cells[index] : null;
+  }
+
+  function cellDisplayName(cell) {
+    if (!cell) return "未选择";
+    if (cell.label) return cell.label;
+    const index = state.cells.findIndex((item) => item.uid === cell.uid);
+    return index >= 0 ? `细胞 ${index + 1}` : cell.uid;
+  }
+
+  function resolveCellMask(cell) {
+    if (!cell) return null;
+    if (cell.uid && cell.uid === state.selectedCellUid) return state.cellMask;
+    return cell.mask || null;
+  }
+
+  function resolveCellEraseMask(cell) {
+    if (!cell) return null;
+    if (cell.uid && cell.uid === state.selectedCellUid) return state.backgroundEraseMask;
+    return cell.backgroundEraseMask || null;
+  }
+
+  function resolveCellContour(cell) {
+    if (!cell) return [];
+    if (cell.uid && cell.uid === state.selectedCellUid) return state.cellContour;
+    return cell.contour || [];
+  }
+
+  function syncSelectedCellToStore() {
+    const cell = getSelectedCell();
+    if (!cell) return;
+    cell.mask = cloneMask(state.cellMask);
+    cell.contour = clonePoints(state.cellContour);
+    cell.contourSource = state.cellContourSource || "manual";
+    cell.backgroundEraseMask = cloneMask(state.backgroundEraseMask);
+    cell.samBox = cloneBox(state.samBox);
+  }
+
+  function loadCellIntoActiveState(cell) {
+    clearActiveCellState();
+    if (!cell) return;
+    state.cellMask = cloneMask(cell.mask);
+    state.cellContour = clonePoints(cell.contour);
+    state.cellContourSource = cell.contourSource || "none";
+    state.backgroundEraseMask = cloneMask(cell.backgroundEraseMask);
+    state.samBox = cloneBox(cell.samBox);
+  }
+
+  function ensureSelectedCell() {
+    if (state.selectedCellUid && getSelectedCell()) return getSelectedCell();
+    if (hasActiveCellDraft()) return null;
+    if (!state.cells.length) {
+      state.selectedCellUid = null;
+      return null;
+    }
+    state.selectedCellUid = state.cells[state.cells.length - 1].uid;
+    loadCellIntoActiveState(getSelectedCell());
+    return getSelectedCell();
+  }
+
+  function selectCell(uid, { update = true } = {}) {
+    syncSelectedCellToStore();
+    state.selectedCellUid = uid;
+    loadCellIntoActiveState(getSelectedCell());
+    if (update) {
+      renderCanvas();
+      updateResults();
+      updateButtonState();
+    }
+  }
+
+  function startNewCellDraft() {
+    syncSelectedCellToStore();
+    state.selectedCellUid = null;
+    clearActiveCellState();
+  }
+
+  function buildCellRecord({
+    mask = state.cellMask,
+    contour = state.cellContour,
+    contourSource = state.cellContourSource,
+    backgroundEraseMask = state.backgroundEraseMask,
+    samBox = state.samBox,
+  } = {}) {
+    if (!mask) return null;
+    return {
+      uid: `c${state.nextCellUid}`,
+      label: `细胞 ${state.nextCellUid}`,
+      mask: cloneMask(mask),
+      contour: clonePoints(contour?.length ? contour : contourFromMaskBoundary(mask, state.source.width, state.source.height)),
+      contourSource: contourSource || "manual",
+      backgroundEraseMask: cloneMask(backgroundEraseMask),
+      samBox: cloneBox(samBox),
+    };
+  }
+
+  function saveActiveCellAsNew() {
+    const cell = buildCellRecord();
+    if (!cell) return null;
+    state.nextCellUid += 1;
+    state.cells.push(cell);
+    state.selectedCellUid = cell.uid;
+    loadCellIntoActiveState(cell);
+    return cell;
+  }
+
+  function removeSelectedCell() {
+    if (!state.selectedCellUid) {
+      clearActiveCellState();
+      return null;
+    }
+    const index = selectedCellIndex();
+    if (index < 0) {
+      state.selectedCellUid = null;
+      clearActiveCellState();
+      return null;
+    }
+    const [removed] = state.cells.splice(index, 1);
+    const next = state.cells[Math.min(index, state.cells.length - 1)] || state.cells[index - 1] || null;
+    state.selectedCellUid = next ? next.uid : null;
+    loadCellIntoActiveState(next);
+    return removed;
+  }
+
+  function countEffectiveCellPixels(cell = getSelectedCell()) {
+    const mask = resolveCellMask(cell);
+    if (!mask) return 0;
+    const eraseMask = resolveCellEraseMask(cell);
     let count = 0;
-    for (let i = 0; i < state.cellMask.length; i += 1) {
-      if (state.cellMask[i] && !state.backgroundEraseMask?.[i]) count += 1;
+    for (let i = 0; i < mask.length; i += 1) {
+      if (mask[i] && !eraseMask?.[i]) count += 1;
     }
     return count;
   }
 
-  function countErasedCellPixels() {
-    if (!state.backgroundEraseMask) return 0;
-    if (!state.cellMask) return countMaskPixels(state.backgroundEraseMask);
+  function countErasedCellPixels(cell = getSelectedCell()) {
+    const eraseMask = resolveCellEraseMask(cell);
+    if (!eraseMask) return 0;
+    const mask = resolveCellMask(cell);
+    if (!mask) return countMaskPixels(eraseMask);
     let count = 0;
-    for (let i = 0; i < state.backgroundEraseMask.length; i += 1) {
-      if (state.backgroundEraseMask[i] && state.cellMask[i]) count += 1;
+    for (let i = 0; i < eraseMask.length; i += 1) {
+      if (eraseMask[i] && mask[i]) count += 1;
     }
     return count;
   }
 
-  function isObjectCounted(object) {
-    if (!state.source) return false;
+  function cellContainingObject(object) {
+    if (!state.source || !state.cells.length) return null;
     const x = clamp(Math.round(object.x), 0, state.source.width - 1);
     const y = clamp(Math.round(object.y), 0, state.source.height - 1);
     const index = y * state.source.width + x;
-    if (state.backgroundEraseMask?.[index]) return false;
-    if (state.cellMask) return Boolean(state.cellMask[index]);
-    return true;
+    for (const cell of state.cells) {
+      const mask = resolveCellMask(cell);
+      if (!mask?.[index]) continue;
+      const eraseMask = resolveCellEraseMask(cell);
+      if (eraseMask?.[index]) continue;
+      return cell;
+    }
+    return null;
   }
 
-  function countedObjects() {
-    return state.objects.filter(isObjectCounted);
+  function isObjectCounted(object, cell = getSelectedCell()) {
+    if (!state.source) return false;
+    if (!state.cells.length) return true;
+    const owner = cellContainingObject(object);
+    if (!cell) return Boolean(owner);
+    return owner?.uid === cell.uid;
+  }
+
+  function countedObjects(cell = getSelectedCell()) {
+    if (!state.cells.length) return [...state.objects];
+    return state.objects.filter((object) => isObjectCounted(object, cell));
   }
 
   function decodeMaskRle(start, runs, width, height) {
@@ -1371,6 +1544,16 @@
     return object.x >= bounds.x0 && object.x < bounds.x1 && object.y >= bounds.y0 && object.y < bounds.y1;
   }
 
+  function blendMaskOnImageData(output, mask, color, alpha) {
+    if (!mask || alpha <= 0) return;
+    for (let i = 0, p = 0; i < mask.length; i += 1, p += 4) {
+      if (!mask[i]) continue;
+      output.data[p] = Math.round(output.data[p] * (1 - alpha) + color[0] * alpha);
+      output.data[p + 1] = Math.round(output.data[p + 1] * (1 - alpha) + color[1] * alpha);
+      output.data[p + 2] = Math.round(output.data[p + 2] * (1 - alpha) + color[2] * alpha);
+    }
+  }
+
   function renderCanvas() {
     if (!state.source) return;
     const { width, height, imageData } = state.source;
@@ -1388,15 +1571,14 @@
       }
     }
 
+    const cellOpacity = Math.min(0.3, Math.max(0.12, opacity * 0.35));
+    state.cells.forEach((cell) => {
+      if (cell.uid === state.selectedCellUid) return;
+      blendMaskOnImageData(output, resolveCellMask(cell), [93, 183, 126], Math.max(0.08, cellOpacity * 0.6));
+    });
+
     if (state.cellMask) {
-      const cellOpacity = Math.min(0.3, Math.max(0.12, opacity * 0.35));
-      const color = [34, 197, 94];
-      for (let i = 0, p = 0; i < state.cellMask.length; i += 1, p += 4) {
-        if (!state.cellMask[i]) continue;
-        output.data[p] = Math.round(output.data[p] * (1 - cellOpacity) + color[0] * cellOpacity);
-        output.data[p + 1] = Math.round(output.data[p + 1] * (1 - cellOpacity) + color[1] * cellOpacity);
-        output.data[p + 2] = Math.round(output.data[p + 2] * (1 - cellOpacity) + color[2] * cellOpacity);
-      }
+      blendMaskOnImageData(output, state.cellMask, [34, 197, 94], cellOpacity);
     }
 
     if (state.backgroundEraseMask) {
@@ -1420,15 +1602,42 @@
   function drawCellOverlay(ctx) {
     if (!state.source) return;
     const { width, height } = state.source;
-    const contour = state.cellContour || [];
     ctx.save();
-    ctx.lineWidth = Math.max(2, Math.round(Math.min(width, height) / 650));
+    const baseLineWidth = Math.max(2, Math.round(Math.min(width, height) / 650));
+    const dotRadius = Math.max(3, Math.round(Math.min(width, height) / 400));
+
+    state.cells.forEach((cell) => {
+      if (cell.uid === state.selectedCellUid) return;
+      const contour = resolveCellContour(cell);
+      if (!contour.length) return;
+      ctx.globalAlpha = 0.75;
+      ctx.lineWidth = Math.max(1, Math.round(baseLineWidth * 0.75));
+      ctx.strokeStyle = "#15803d";
+      ctx.fillStyle = "#15803d";
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      contour.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y);
+        else ctx.lineTo(point.x, point.y);
+      });
+      if (contour.length >= 3) ctx.closePath();
+      ctx.stroke();
+      const anchor = contour[0];
+      if (anchor) {
+        ctx.fillRect(anchor.x - 2, anchor.y - 2, 4, 4);
+        ctx.font = `${Math.max(11, Math.round(width / 220))}px ui-sans-serif, system-ui`;
+        ctx.fillText(cellDisplayName(cell), anchor.x + 8, anchor.y + 4);
+      }
+    });
+
+    const contour = state.cellContour || [];
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = baseLineWidth;
     ctx.strokeStyle = "#16a34a";
     ctx.fillStyle = "#16a34a";
 
     if (state.cellMask) {
       const step = Math.max(1, Math.round(Math.min(width, height) / 1200));
-      ctx.globalAlpha = 0.9;
       for (let y = 1; y < height - 1; y += step) {
         for (let x = 1; x < width - 1; x += step) {
           const index = y * width + x;
@@ -1446,7 +1655,6 @@
     }
 
     if (contour.length) {
-      ctx.globalAlpha = 1;
       ctx.setLineDash(state.cellDrawMode || state.samPointMode ? [12, 8] : []);
       ctx.beginPath();
       contour.forEach((point, index) => {
@@ -1456,7 +1664,6 @@
       if (state.cellContourSource !== "manual-draft" && contour.length >= 3) ctx.closePath();
       ctx.stroke();
 
-      const dotRadius = Math.max(3, Math.round(Math.min(width, height) / 400));
       contour.forEach((point) => {
         ctx.beginPath();
         ctx.arc(point.x, point.y, dotRadius, 0, Math.PI * 2);
@@ -1465,7 +1672,6 @@
     }
 
     if (state.cellControlPoints.length) {
-      ctx.globalAlpha = 1;
       const positivePoints = state.cellControlPoints.filter((point) => point.label !== 0);
       ctx.strokeStyle = "#16a34a";
       ctx.fillStyle = "#16a34a";
@@ -1771,6 +1977,9 @@
       addCellContourPoint(event);
       return;
     }
+    if (state.correctionMode === "none" && selectCellAtPoint(canvasPoint(event))) {
+      return;
+    }
     handleCanvasCorrection(event);
   }
 
@@ -1875,6 +2084,7 @@
     els.imageCanvas.classList.toggle("cell-draw-mode", state.cellDrawMode);
     els.drawCellButton.classList.toggle("active", state.cellDrawMode);
     if (state.cellDrawMode) {
+      startNewCellDraft();
       setSamPointMode(false, false);
       setSamBoxMode(false, false);
       setMaskEditMode(false, false);
@@ -1897,6 +2107,7 @@
     els.imageCanvas.classList.toggle("sam-point-mode", state.samPointMode);
     els.samPointButton.classList.toggle("active", state.samPointMode);
     if (state.samPointMode) {
+      startNewCellDraft();
       setCellDrawMode(false, false);
       setSamBoxMode(false, false);
       setMaskEditMode(false, false);
@@ -1906,12 +2117,11 @@
       state.tempRoi = null;
       els.roiButton?.classList.remove("active");
       els.imageCanvas.classList.remove("roi-mode");
-      if (!state.cellControlPoints.length && state.cellContour.length >= 3) {
-        state.cellControlPoints = downsamplePoints(state.cellContour, 12);
-      }
     }
     if (updateStatus) {
-      const helper = hasSamBridge() ? "SAM 接口就绪" : "当前网页模式无 Python 桥接，将使用点选预览";
+      const helper = hasSamBridge()
+        ? "SAM 接口就绪"
+        : "SAM 桥未注入：请在已激活 environment-runtime.yml 的终端里执行 npm start";
       setStatus(state.samPointMode ? `SAM 点选：点击添加绿色细胞点，按住 Alt/Option 点击添加红色背景点，${helper}` : "SAM 点选关闭");
     }
     updateButtonState();
@@ -1923,6 +2133,7 @@
     els.imageCanvas.classList.toggle("sam-box-mode", state.samBoxMode);
     els.boxCellButton.classList.toggle("active", state.samBoxMode);
     if (state.samBoxMode) {
+      startNewCellDraft();
       setSamPointMode(false, false);
       setCellDrawMode(false, false);
       setMaskEditMode(false, false);
@@ -1941,7 +2152,7 @@
   }
 
   function setMaskEditMode(enabled, updateStatus = true) {
-    state.maskEditMode = Boolean(enabled && state.source);
+    state.maskEditMode = Boolean(enabled && state.source && !!ensureSelectedCell());
     els.imageCanvas.classList.toggle("mask-edit-mode", state.maskEditMode);
     els.maskEditButton.classList.toggle("active", state.maskEditMode);
     if (state.maskEditMode) {
@@ -2007,30 +2218,71 @@
       if (hasSamBridge() && !state.samUnavailable) {
         const result = await window.lipidCellSegmentation.samPredict({
           imagePng: sourceImageDataUrl(),
-          points: points.map((point) => ({ ...point, label: 1 })),
+          points: points.map((point) => ({ x: point.x, y: point.y, label: point.label ?? 1 })),
           box: box ? { x0: box.x, y0: box.y, x1: box.x + box.width, y1: box.y + box.height } : null,
           modelType: "vit_b",
         });
         if (result?.ok) {
           applySamResult(result, reason === "hover" ? "sam-preview" : "sam");
-          setStatus(`SAM 分割完成，置信度 ${formatNumber(result.score || 0)}`);
+          const deviceNote = result.warning
+            ? `，${result.warning}`
+            : result.device === "cpu"
+              ? "，当前使用 CPU"
+              : "";
+          const saved =
+            reason === "box" || reason === "button"
+              ? saveActiveCellAsNew()
+              : null;
+          if (saved) {
+            setSamPointMode(false, false);
+            setSamBoxMode(false, false);
+            setStatus(`${cellDisplayName(saved)} 已保存，SAM 置信度 ${formatNumber(result.score || 0)}${deviceNote}`);
+          } else {
+            setStatus(`SAM 分割完成，置信度 ${formatNumber(result.score || 0)}${deviceNote}`);
+          }
         } else {
           state.samUnavailable = true;
+          const samError = result?.detail
+            ? `${result?.error || "SAM 不可用"}（${result.detail}）`
+            : `${result?.error || "SAM 不可用"}`;
           const previewed = applyFallbackSamMask(box, points);
+          const saved = previewed && (reason === "box" || reason === "button") ? saveActiveCellAsNew() : null;
+          if (saved) {
+            setSamPointMode(false, false);
+            setSamBoxMode(false, false);
+          }
           setStatus(
             previewed
-              ? `${result?.error || "SAM 不可用"}；已用绿色点生成临时多边形轮廓`
-              : `${result?.error || "SAM 不可用"}；未生成粗略大圆，请安装 SAM 或至少添加 3 个绿色点`
+              ? `${samError}；已用绿色点生成临时多边形轮廓${saved ? `，并保存为 ${cellDisplayName(saved)}` : ""}`
+              : `${samError}；未生成粗略大圆，请安装 SAM 或至少添加 3 个绿色点`
           );
         }
       } else {
         const previewed = applyFallbackSamMask(box, points);
-        setStatus(previewed ? "当前不是 Electron SAM 环境，已用绿色点生成临时多边形轮廓" : "当前不是 Electron SAM 环境：请安装并从软件版运行 SAM，或至少添加 3 个绿色点");
+        const saved = previewed && (reason === "box" || reason === "button") ? saveActiveCellAsNew() : null;
+        if (saved) {
+          setSamPointMode(false, false);
+          setSamBoxMode(false, false);
+        }
+        setStatus(
+          previewed
+            ? `SAM 桥未注入，已用绿色点生成临时多边形轮廓${saved ? `，并保存为 ${cellDisplayName(saved)}` : ""}`
+            : "SAM 桥未注入：请在已激活 environment-runtime.yml 的终端里执行 npm start，或至少添加 3 个绿色点"
+        );
       }
     } catch (error) {
       console.error(error);
       const previewed = applyFallbackSamMask(box, points);
-      setStatus(previewed ? "SAM 运行失败，已用绿色点生成临时多边形轮廓" : "SAM 运行失败，未生成粗略大圆");
+      const saved = previewed && (reason === "box" || reason === "button") ? saveActiveCellAsNew() : null;
+      if (saved) {
+        setSamPointMode(false, false);
+        setSamBoxMode(false, false);
+      }
+      setStatus(
+        previewed
+          ? `SAM 运行失败，已用绿色点生成临时多边形轮廓${saved ? `，并保存为 ${cellDisplayName(saved)}` : ""}`
+          : "SAM 运行失败，未生成粗略大圆"
+      );
     } finally {
       state.samBusy = false;
       renderCanvas();
@@ -2048,6 +2300,7 @@
     state.cellMask = decodeMaskRle(result.maskStart, result.maskRle, result.width, result.height);
     state.cellContour = contourFromMaskBoundary(state.cellMask, result.width, result.height);
     state.cellContourSource = source;
+    state.backgroundEraseMask = null;
   }
 
   function applyFallbackSamMask(box, points = state.cellControlPoints) {
@@ -2187,6 +2440,7 @@
 
   function finishMaskErase() {
     state.isErasingMask = false;
+    syncSelectedCellToStore();
     renderCanvas();
     updateResults();
     updateButtonState();
@@ -2204,6 +2458,7 @@
 
   function clearBackgroundEraseMask() {
     state.backgroundEraseMask = null;
+    syncSelectedCellToStore();
     renderCanvas();
     updateResults();
     updateButtonState();
@@ -2236,29 +2491,27 @@
     state.cellMask = polygonToMask(state.cellContour, state.source.width, state.source.height);
     state.cellContourSource = "manual";
     state.cellControlPoints = [];
+    const saved = saveActiveCellAsNew();
     setCellDrawMode(false, false);
     renderCanvas();
     updateResults();
     updateButtonState();
     saveHistoryDebounced();
-    setStatus(`细胞轮廓已闭合，面积 ${formatArea(countMaskPixels(state.cellMask))}`);
+    setStatus(`${saved ? cellDisplayName(saved) : "细胞"} 已保存，面积 ${formatArea(countMaskPixels(state.cellMask))}`);
   }
 
   function clearCellContour() {
-    state.cellMask = null;
-    state.cellContour = [];
-    state.cellControlPoints = [];
-    state.cellContourSource = "none";
-    state.samBox = null;
-    state.tempSamBox = null;
-    state.samHoverPoint = null;
+    const removed = removeSelectedCell();
+    if (!removed && hasActiveCellDraft()) clearActiveCellState();
+    setMaskEditMode(false, false);
     setSamPointMode(false, false);
     setSamBoxMode(false, false);
     setCellDrawMode(false, false);
     renderCanvas();
     updateResults();
     updateButtonState();
-    setStatus("已清除细胞轮廓");
+    saveHistoryDebounced();
+    setStatus(removed ? `已删除 ${cellDisplayName(removed)}` : "已清除当前细胞草稿");
   }
 
   async function autoDetectCell() {
@@ -2273,14 +2526,16 @@
       await runSamPrediction("box");
       return;
     }
+    const beforeCount = state.cells.length;
     refreshCellMaskAfterAnalysis(true);
     renderCanvas();
     updateResults();
     updateButtonState();
-    const area = countMaskPixels(state.cellMask);
+    const created = state.cells.length > beforeCount ? getSelectedCell() : null;
+    const area = created ? countMaskPixels(resolveCellMask(created)) : 0;
     setStatus(
       area
-        ? `已自动识别细胞轮廓，面积 ${formatArea(area)}`
+        ? `已自动识别并保存 ${cellDisplayName(created)}，面积 ${formatArea(area)}`
         : "自动识别不够可靠：请先框选 ROI 后用 SAM，或改用手动绘制轮廓"
     );
   }
@@ -2288,27 +2543,25 @@
   function refreshCellMaskAfterAnalysis(forceAuto = false) {
     if (!state.source) return;
     const { width, height } = state.source;
-    if (
-      !forceAuto &&
-      ["manual", "sam", "sam-preview"].includes(state.cellContourSource) &&
-      state.cellContour.length >= 3
-    ) {
-      state.cellMask = polygonToMask(state.cellContour, width, height);
+    if (!forceAuto) {
+      ensureSelectedCell();
       return;
     }
-
     if (!state.signal || !state.bounds) {
-      state.cellMask = null;
-      state.cellContour = [];
-      state.cellContourSource = "none";
       return;
     }
 
     const mask = detectCellMask(state.signal, width, height, state.bounds);
+    if (!mask) {
+      return;
+    }
+
+    startNewCellDraft();
     state.cellMask = mask;
-    state.cellContour = [];
+    state.cellContour = contourFromMaskBoundary(mask, width, height);
     state.cellControlPoints = [];
-    state.cellContourSource = mask ? "auto" : "none";
+    state.cellContourSource = "auto";
+    saveActiveCellAsNew();
   }
 
   function addManualObject(point) {
@@ -2451,6 +2704,21 @@
     }
   }
 
+  function selectCellAtPoint(point) {
+    if (!state.source || !state.cells.length) return false;
+    const index = point.y * state.source.width + point.x;
+    for (let cellIndex = state.cells.length - 1; cellIndex >= 0; cellIndex -= 1) {
+      const cell = state.cells[cellIndex];
+      const mask = resolveCellMask(cell);
+      const eraseMask = resolveCellEraseMask(cell);
+      if (!mask?.[index] || eraseMask?.[index]) continue;
+      selectCell(cell.uid);
+      setStatus(`已选中 ${cellDisplayName(cell)}`);
+      return true;
+    }
+    return false;
+  }
+
   function canvasPoint(event) {
     const rect = els.imageCanvas.getBoundingClientRect();
     const x = ((event.clientX - rect.left) / rect.width) * state.source.width;
@@ -2505,56 +2773,165 @@
     drawHistogram(empty, null);
   }
 
-  function updateResults() {
-    const objects = countedObjects();
-    const settings = state.settings;
+  function buildCellSummary(cell = getSelectedCell()) {
+    const objects = countedObjects(cell);
     const count = objects.length;
-    const totalArea = objects.reduce((sum, object) => sum + object.area, 0);
-    const meanDiameter = count ? objects.reduce((sum, object) => sum + object.equivalentDiameter, 0) / count : 0;
-    const micron = settings.micronPerPixel;
-    const boundsArea = state.bounds ? state.bounds.width * state.bounds.height : 0;
-    const cellArea = countEffectiveCellPixels();
-    const areaRatio = cellArea ? totalArea / cellArea : 0;
-
-    els.countMetric.textContent = String(count);
-    els.diameterMetric.textContent = count
-      ? micron
-        ? `${formatNumber(meanDiameter * micron)} µm`
-        : `${formatNumber(meanDiameter)} px`
-      : "--";
-    els.areaMetric.textContent = count
-      ? micron
-        ? `${formatNumber(totalArea * micron * micron)} µm²`
-        : `${formatNumber(totalArea)} px²`
-      : "--";
-    els.densityMetric.textContent =
-      count && boundsArea
-        ? micron
-          ? `${formatNumber(count / ((boundsArea * micron * micron) / 1000))}/1000 µm²`
-          : `${formatNumber(count / (boundsArea / 1_000_000))}/Mpx`
-        : "--";
-    els.cellAreaMetric.textContent = cellArea ? formatArea(cellArea) : "--";
-    els.areaRatioMetric.textContent = cellArea ? `${formatNumber(areaRatio * 100)}%` : "--";
-
-    els.objectBadge.textContent = `${count} 个`;
-    els.manualBadge.textContent = `+${state.manualObjects.length} / -${state.suppressedObjects.length}`;
-    els.maskBadge.textContent = `${formatNumber(countErasedCellPixels())} px`;
-    els.cellBadge.textContent = cellArea
-      ? cellSourceLabel()
-      : "未识别";
-    renderTable(objects, micron);
+    const totalAreaPx = objects.reduce((sum, object) => sum + object.area, 0);
+    const meanAreaPx = count ? totalAreaPx / count : 0;
+    const meanDiameterPx = count
+      ? objects.reduce((sum, object) => sum + object.equivalentDiameter, 0) / count
+      : 0;
+    const rawCellAreaPx = cell ? countMaskPixels(resolveCellMask(cell)) : 0;
+    const erasedCellAreaPx = cell ? countErasedCellPixels(cell) : 0;
+    const cellAreaPx = cell ? countEffectiveCellPixels(cell) : 0;
+    const areaRatio = cellAreaPx ? totalAreaPx / cellAreaPx : 0;
+    return {
+      cellUid: cell?.uid || "",
+      cellLabel: cell ? cellDisplayName(cell) : "全部对象",
+      cellSource: cell?.contourSource || "none",
+      count,
+      totalAreaPx,
+      meanAreaPx,
+      meanDiameterPx,
+      rawCellAreaPx,
+      erasedCellAreaPx,
+      cellAreaPx,
+      areaRatio,
+      objects,
+    };
   }
 
-  function cellSourceLabel() {
-    if (state.cellContourSource === "manual") return "手动轮廓";
-    if (state.cellContourSource === "sam") return "SAM";
-    if (state.cellContourSource === "sam-preview") return "SAM 预览";
+  function buildAggregateSummary() {
+    const cellSummaries = state.cells.map((cell) => buildCellSummary(cell));
+    const assignedObjects = state.cells.length ? state.objects.filter((object) => Boolean(cellContainingObject(object))) : state.objects;
+    const count = assignedObjects.length;
+    const totalAreaPx = assignedObjects.reduce((sum, object) => sum + object.area, 0);
+    const meanAreaPx = count ? totalAreaPx / count : 0;
+    const meanDiameterPx = count
+      ? assignedObjects.reduce((sum, object) => sum + object.equivalentDiameter, 0) / count
+      : 0;
+    const rawCellAreaPx = cellSummaries.reduce((sum, summary) => sum + summary.rawCellAreaPx, 0);
+    const erasedCellAreaPx = cellSummaries.reduce((sum, summary) => sum + summary.erasedCellAreaPx, 0);
+    const cellAreaPx = cellSummaries.reduce((sum, summary) => sum + summary.cellAreaPx, 0);
+    const areaRatio = cellAreaPx ? totalAreaPx / cellAreaPx : 0;
+    return {
+      cellUid: "",
+      cellLabel: state.cells.length ? `全部 ${state.cells.length} 个细胞` : "全部对象",
+      cellSource: "",
+      count,
+      totalAreaPx,
+      meanAreaPx,
+      meanDiameterPx,
+      rawCellAreaPx,
+      erasedCellAreaPx,
+      cellAreaPx,
+      areaRatio,
+      objects: assignedObjects,
+    };
+  }
+
+  function renderCellList(micron) {
+    if (!els.cellList) return;
+    els.cellCountBadge.textContent = `${state.cells.length} 个`;
+    if (!state.cells.length) {
+      els.cellList.innerHTML = `<div class="history-empty">暂无细胞</div>`;
+      return;
+    }
+
+    els.cellList.innerHTML = state.cells
+      .map((cell) => {
+        const summary = buildCellSummary(cell);
+        const selected = cell.uid === state.selectedCellUid;
+        const areaText = summary.cellAreaPx
+          ? micron
+            ? `${formatNumber(summary.cellAreaPx * micron * micron)} µm²`
+            : `${formatNumber(summary.cellAreaPx)} px²`
+          : "--";
+        return `
+          <button class="cell-item ${selected ? "selected" : ""}" type="button" data-cell-uid="${escapeHtml(cell.uid)}">
+            <strong>${escapeHtml(cellDisplayName(cell))} · ${escapeHtml(cellSourceLabel(cell.contourSource))}</strong>
+            <span>${summary.count} 个脂滴 · 面积 ${areaText}</span>
+          </button>
+        `;
+      })
+      .join("");
+
+    els.cellList.querySelectorAll("[data-cell-uid]").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectCell(button.dataset.cellUid);
+        setStatus(`已切换到 ${cellDisplayName(getSelectedCell())}`);
+      });
+    });
+  }
+
+  function updateResults() {
+    const selectedCell = ensureSelectedCell();
+    const summary = selectedCell ? buildCellSummary(selectedCell) : buildAggregateSummary();
+    const settings = state.settings;
+    const micron = settings.micronPerPixel;
+    const boundsArea = state.bounds ? state.bounds.width * state.bounds.height : 0;
+    const draftLabel = state.cellContour.length
+      ? `${state.cellContour.length} 点`
+      : state.cellControlPoints.length
+        ? `${state.cellControlPoints.length} 提示点`
+        : state.samBox
+          ? "新细胞草稿"
+          : "";
+
+    els.countMetric.textContent = String(summary.count);
+    els.diameterMetric.textContent = summary.count
+      ? micron
+        ? `${formatNumber(summary.meanDiameterPx * micron)} µm`
+        : `${formatNumber(summary.meanDiameterPx)} px`
+      : "--";
+    els.areaMetric.textContent = summary.count
+      ? micron
+        ? `${formatNumber(summary.totalAreaPx * micron * micron)} µm²`
+        : `${formatNumber(summary.totalAreaPx)} px²`
+      : "--";
+    els.densityMetric.textContent =
+      summary.count && boundsArea
+        ? micron
+          ? `${formatNumber(summary.count / ((boundsArea * micron * micron) / 1000))}/1000 µm²`
+          : `${formatNumber(summary.count / (boundsArea / 1_000_000))}/Mpx`
+        : "--";
+    els.cellAreaMetric.textContent = summary.cellAreaPx
+      ? micron
+        ? `${formatNumber(summary.cellAreaPx * micron * micron)} µm²`
+        : `${formatNumber(summary.cellAreaPx)} px²`
+      : "--";
+    els.areaRatioMetric.textContent = summary.cellAreaPx ? `${formatNumber(summary.areaRatio * 100)}%` : "--";
+
+    els.objectBadge.textContent = `${summary.count} 个`;
+    els.manualBadge.textContent = `+${state.manualObjects.length} / -${state.suppressedObjects.length}`;
+    els.maskBadge.textContent = `${formatNumber(summary.erasedCellAreaPx)} px`;
+    els.cellBadge.textContent = selectedCell
+      ? `${cellDisplayName(selectedCell)} · ${cellSourceLabel(selectedCell.contourSource)}`
+      : draftLabel || (state.cells.length
+        ? `${state.cells.length} 个细胞`
+        : "未识别");
+    els.selectedCellBadge.textContent = selectedCell
+      ? `${cellDisplayName(selectedCell)} · ${cellSourceLabel(selectedCell.contourSource)}`
+      : state.cells.length
+        ? `全部 ${state.cells.length} 个细胞`
+        : "全部对象";
+
+    renderCellList(micron);
+    renderTable(summary.objects, micron, selectedCell);
+  }
+
+  function cellSourceLabel(source = state.cellContourSource) {
+    if (source === "manual") return "手动轮廓";
+    if (source === "sam") return "SAM";
+    if (source === "sam-preview") return "SAM 预览";
     return "自动轮廓";
   }
 
-  function renderTable(objects, micron) {
+  function renderTable(objects, micron, cell = getSelectedCell()) {
     if (!objects.length) {
-      els.objectTable.innerHTML = `<tr><td colspan="7" class="empty-cell">暂无结果</td></tr>`;
+      els.objectTable.innerHTML = `<tr><td colspan="7" class="empty-cell">${
+        cell ? "当前细胞暂无脂滴" : "暂无结果"
+      }</td></tr>`;
       return;
     }
 
@@ -2584,21 +2961,29 @@
   function exportCsv() {
     if (!state.source) return;
     const micron = state.settings.micronPerPixel;
-    const summary = buildSingleCellSummary();
+    const selectedCell = getSelectedCell();
+    const selectedSummary = buildSingleCellSummary();
+    const aggregateSummary = buildAggregateSummary();
     const summaryRows = [
       ["summary_key", "value", "unit"],
       ["image", state.source.name || "", ""],
       ["image_width", state.source.width, "px"],
       ["image_height", state.source.height, "px"],
-      ["cell_contour_source", state.cellContourSource || "none", ""],
-      ["raw_cell_area_px2", summary.rawCellAreaPx, "px2"],
-      ["background_erased_area_px2", summary.erasedCellAreaPx, "px2"],
-      ["cell_area_px2", summary.cellAreaPx, "px2"],
-      ["droplet_count", summary.count, ""],
-      ["droplet_total_area_px2", summary.totalAreaPx.toFixed(3), "px2"],
-      ["droplet_mean_area_px2", summary.meanAreaPx.toFixed(3), "px2"],
-      ["droplet_mean_diameter_px", summary.meanDiameterPx.toFixed(3), "px"],
-      ["droplet_cell_area_ratio", summary.areaRatio.toFixed(6), ""],
+      ["cell_count", state.cells.length, ""],
+      ["selected_cell", selectedCell ? cellDisplayName(selectedCell) : "", ""],
+      ["selected_cell_source", selectedCell?.contourSource || "none", ""],
+      ["selected_raw_cell_area_px2", selectedSummary.rawCellAreaPx, "px2"],
+      ["selected_background_erased_area_px2", selectedSummary.erasedCellAreaPx, "px2"],
+      ["selected_cell_area_px2", selectedSummary.cellAreaPx, "px2"],
+      ["selected_droplet_count", selectedSummary.count, ""],
+      ["selected_droplet_total_area_px2", selectedSummary.totalAreaPx.toFixed(3), "px2"],
+      ["selected_droplet_mean_area_px2", selectedSummary.meanAreaPx.toFixed(3), "px2"],
+      ["selected_droplet_mean_diameter_px", selectedSummary.meanDiameterPx.toFixed(3), "px"],
+      ["selected_droplet_cell_area_ratio", selectedSummary.areaRatio.toFixed(6), ""],
+      ["aggregate_droplet_count", aggregateSummary.count, ""],
+      ["aggregate_droplet_total_area_px2", aggregateSummary.totalAreaPx.toFixed(3), "px2"],
+      ["aggregate_cell_area_px2", aggregateSummary.cellAreaPx.toFixed(3), "px2"],
+      ["aggregate_droplet_cell_area_ratio", aggregateSummary.areaRatio.toFixed(6), ""],
       ["manual_added", state.manualObjects.length, ""],
       ["manual_removed", state.suppressedObjects.length, ""],
       ["input_mode", state.settings.mode, ""],
@@ -2613,19 +2998,61 @@
       ["roi_width", state.bounds ? state.bounds.width : "", "px"],
       ["roi_height", state.bounds ? state.bounds.height : "", "px"],
       ["coordinate_origin", "top-left pixel of original image", ""],
-      ["coordinate_scope", "auto detected and manual added droplets after current filters", ""],
+      ["coordinate_scope", "auto detected and manual added droplets after current filters, with cell ownership", ""],
     ];
     if (micron) {
       summaryRows.push(
         ["micron_per_pixel", micron, "um/px"],
-        ["raw_cell_area_um2", (summary.rawCellAreaPx * micron * micron).toFixed(4), "um2"],
-        ["background_erased_area_um2", (summary.erasedCellAreaPx * micron * micron).toFixed(4), "um2"],
-        ["cell_area_um2", (summary.cellAreaPx * micron * micron).toFixed(4), "um2"],
-        ["droplet_total_area_um2", (summary.totalAreaPx * micron * micron).toFixed(4), "um2"],
-        ["droplet_mean_area_um2", (summary.meanAreaPx * micron * micron).toFixed(4), "um2"],
-        ["droplet_mean_diameter_um", (summary.meanDiameterPx * micron).toFixed(4), "um"],
+        ["selected_raw_cell_area_um2", (selectedSummary.rawCellAreaPx * micron * micron).toFixed(4), "um2"],
+        ["selected_background_erased_area_um2", (selectedSummary.erasedCellAreaPx * micron * micron).toFixed(4), "um2"],
+        ["selected_cell_area_um2", (selectedSummary.cellAreaPx * micron * micron).toFixed(4), "um2"],
+        ["selected_droplet_total_area_um2", (selectedSummary.totalAreaPx * micron * micron).toFixed(4), "um2"],
+        ["selected_droplet_mean_area_um2", (selectedSummary.meanAreaPx * micron * micron).toFixed(4), "um2"],
+        ["selected_droplet_mean_diameter_um", (selectedSummary.meanDiameterPx * micron).toFixed(4), "um"],
+        ["aggregate_cell_area_um2", (aggregateSummary.cellAreaPx * micron * micron).toFixed(4), "um2"],
+        ["aggregate_droplet_total_area_um2", (aggregateSummary.totalAreaPx * micron * micron).toFixed(4), "um2"],
       );
     }
+
+    const cellHeaders = [
+      "cell_id",
+      "cell_label",
+      "cell_source",
+      "raw_cell_area_px2",
+      "background_erased_area_px2",
+      "cell_area_px2",
+      "droplet_count",
+      "droplet_total_area_px2",
+      "droplet_mean_area_px2",
+      "droplet_mean_diameter_px",
+      "droplet_cell_area_ratio",
+    ];
+    if (micron) cellHeaders.push("raw_cell_area_um2", "cell_area_um2", "droplet_total_area_um2", "droplet_mean_diameter_um");
+    const cellRows = state.cells.map((cell) => {
+      const summary = buildCellSummary(cell);
+      const row = [
+        summary.cellUid,
+        summary.cellLabel,
+        cellSourceLabel(summary.cellSource),
+        summary.rawCellAreaPx.toFixed(3),
+        summary.erasedCellAreaPx.toFixed(3),
+        summary.cellAreaPx.toFixed(3),
+        summary.count,
+        summary.totalAreaPx.toFixed(3),
+        summary.meanAreaPx.toFixed(3),
+        summary.meanDiameterPx.toFixed(3),
+        summary.areaRatio.toFixed(6),
+      ];
+      if (micron) {
+        row.push(
+          (summary.rawCellAreaPx * micron * micron).toFixed(4),
+          (summary.cellAreaPx * micron * micron).toFixed(4),
+          (summary.totalAreaPx * micron * micron).toFixed(4),
+          (summary.meanDiameterPx * micron).toFixed(4),
+        );
+      }
+      return row.map(csvCell).join(",");
+    });
 
     const headers = [
       "image",
@@ -2633,6 +3060,8 @@
       "object_uid",
       "source",
       "source_label",
+      "cell_uid",
+      "cell_label",
       "center_x_px",
       "center_y_px",
       "area_px2",
@@ -2643,17 +3072,21 @@
       "bbox_y",
       "bbox_width",
       "bbox_height",
-      "counted_in_cell",
+      "counted_in_selected_cell",
+      "counted_in_any_cell",
     ];
     if (micron) headers.push("center_x_um", "center_y_um", "area_um2", "diameter_um");
 
     const rows = state.objects.map((object) => {
+      const owner = cellContainingObject(object);
       const row = [
         state.source.name || "",
         object.id,
         object.uid || "",
         object.source === "manual" ? "manual" : "auto",
         object.source === "manual" ? "手动补点" : "自动识别",
+        owner?.uid || "",
+        owner ? cellDisplayName(owner) : "",
         object.x.toFixed(2),
         object.y.toFixed(2),
         object.area.toFixed(3),
@@ -2664,7 +3097,8 @@
         object.minY,
         object.maxX - object.minX + 1,
         object.maxY - object.minY + 1,
-        isObjectCounted(object) ? 1 : 0,
+        selectedCell ? (isObjectCounted(object, selectedCell) ? 1 : 0) : 0,
+        owner ? 1 : 0,
       ];
       if (micron) {
         row.push(
@@ -2678,8 +3112,12 @@
     });
 
     const csv = [
-      "single_cell_summary",
+      "selected_cell_summary",
       ...summaryRows.map((row) => row.map(csvCell).join(",")),
+      "",
+      "per_cell_summary",
+      cellHeaders.map(csvCell).join(","),
+      ...cellRows,
       "",
       "droplet_coordinate_table",
       headers.map(csvCell).join(","),
@@ -2690,18 +3128,8 @@
   }
 
   function buildSingleCellSummary() {
-    const objects = countedObjects();
-    const count = objects.length;
-    const totalAreaPx = objects.reduce((sum, object) => sum + object.area, 0);
-    const meanAreaPx = count ? totalAreaPx / count : 0;
-    const meanDiameterPx = count
-      ? objects.reduce((sum, object) => sum + object.equivalentDiameter, 0) / count
-      : 0;
-    const rawCellAreaPx = countMaskPixels(state.cellMask);
-    const erasedCellAreaPx = countErasedCellPixels();
-    const cellAreaPx = countEffectiveCellPixels();
-    const areaRatio = cellAreaPx ? totalAreaPx / cellAreaPx : 0;
-    return { count, totalAreaPx, meanAreaPx, meanDiameterPx, rawCellAreaPx, erasedCellAreaPx, cellAreaPx, areaRatio };
+    const selectedCell = getSelectedCell();
+    return selectedCell ? buildCellSummary(selectedCell) : buildAggregateSummary();
   }
 
   function csvCell(value) {
@@ -2791,9 +3219,9 @@
 
   function updateButtonState() {
     const hasImage = Boolean(state.source);
-    const hasObjects = state.objects.length > 0;
     const hasCorrections = state.manualObjects.length > 0 || state.suppressedObjects.length > 0;
-    const hasCell = Boolean(state.cellMask) || state.cellContour.length > 0;
+    const selectedCell = getSelectedCell();
+    const hasCell = Boolean(selectedCell || hasActiveCellDraft() || state.cells.length);
     const hasEraseMask = Boolean(state.backgroundEraseMask && countMaskPixels(state.backgroundEraseMask));
     const hasHistory = state.historyRecords.length > 0;
     const hasSamPositivePoint = state.cellControlPoints.some((point) => point.label !== 0);
@@ -2816,7 +3244,7 @@
     els.drawCellButton.disabled = !hasImage || state.busy;
     els.finishCellButton.disabled = !hasImage || state.cellContour.length < 3;
     els.clearCellButton.disabled = !hasImage || !hasCell;
-    els.maskEditButton.disabled = !hasImage;
+    els.maskEditButton.disabled = !hasImage || !selectedCell;
     els.clearMaskButton.disabled = !hasImage || !hasEraseMask;
     els.eraseBrushInput.disabled = !hasImage;
     els.saveHistoryButton.disabled = !hasImage || !state.historyDb;
@@ -2824,11 +3252,19 @@
     els.manualBadge.textContent = `+${state.manualObjects.length} / -${state.suppressedObjects.length}`;
     els.maskBadge.textContent = `${formatNumber(countErasedCellPixels())} px`;
     els.historyBadge.textContent = `${state.historyRecords.length} / ${HISTORY_LIMIT}`;
-    els.cellBadge.textContent = state.cellMask
-      ? cellSourceLabel()
-      : state.cellContour.length
-        ? `${state.cellContour.length} 点`
-        : "未识别";
+    const draftLabel = state.cellContour.length
+      ? `${state.cellContour.length} 点`
+      : state.cellControlPoints.length
+        ? `${state.cellControlPoints.length} 提示点`
+        : state.samBox
+          ? "新细胞草稿"
+          : "";
+    els.cellCountBadge.textContent = `${state.cells.length} 个`;
+    els.cellBadge.textContent = selectedCell
+      ? `${cellDisplayName(selectedCell)} · ${cellSourceLabel(selectedCell.contourSource)}`
+      : draftLabel || (state.cells.length
+          ? `${state.cells.length} 个细胞`
+          : "未识别");
     document.querySelectorAll("[data-correction-mode]").forEach((button) => {
       button.disabled = !hasImage && button.dataset.correctionMode !== "none";
     });
@@ -2945,6 +3381,7 @@
       .map((record) => {
         const summary = record.summary || {};
         const count = summary.count ?? 0;
+        const cellCount = summary.cellCount ?? 0;
         const ratio = summary.areaRatio ? `${formatNumber(summary.areaRatio * 100)}%` : "--";
         const date = new Date(record.updatedAt).toLocaleString("zh-CN", {
           month: "2-digit",
@@ -2955,7 +3392,7 @@
         return `
           <button class="history-item" type="button" data-history-id="${escapeHtml(record.id)}">
             <strong>${escapeHtml(record.name || "未命名图像")}</strong>
-            <span>${date} · ${record.width}×${record.height} · ${count} 个 · ${ratio}</span>
+            <span>${date} · ${record.width}×${record.height} · ${cellCount} 细胞 · ${count} 个 · ${ratio}</span>
           </button>
         `;
       })
@@ -2989,7 +3426,9 @@
   }
 
   async function buildHistoryRecord() {
-    const summary = buildSingleCellSummary();
+    syncSelectedCellToStore();
+    const { objects: _ignoredObjects, ...summaryBase } = buildAggregateSummary();
+    const summary = { ...summaryBase, cellCount: state.cells.length };
     return {
       id: state.currentHistoryId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       name: state.source.name || "未命名图像",
@@ -2999,19 +3438,53 @@
       imageBlob: await sourceImageBlob(),
       settings: { ...state.settings },
       roi: state.roi ? { ...state.roi } : null,
-      cellContour: state.cellContour.map((point) => ({ ...point })),
-      cellControlPoints: state.cellControlPoints.map((point) => ({ ...point })),
-      cellContourSource: state.cellContourSource,
-      samBox: state.samBox ? { ...state.samBox } : null,
-      backgroundEraseMask: state.backgroundEraseMask ? state.backgroundEraseMask.slice() : null,
+      selectedCellUid: state.selectedCellUid,
+      cells: state.cells.map((cell) => ({
+        uid: cell.uid,
+        label: cell.label || cellDisplayName(cell),
+        mask: cloneMask(resolveCellMask(cell)),
+        contour: clonePoints(resolveCellContour(cell)),
+        contourSource: cell.contourSource || "none",
+        backgroundEraseMask: cloneMask(resolveCellEraseMask(cell)),
+        samBox: cloneBox(cell.samBox),
+      })),
       eraseBrushSize: state.eraseBrushSize,
       manualObjects: state.manualObjects.map((object) => ({ ...object })),
       suppressedObjects: state.suppressedObjects.map((object) => ({ ...object })),
       correctionHistory: state.correctionHistory.map((item) => ({ ...item })),
+      nextCellUid: state.nextCellUid,
       nextManualUid: state.nextManualUid,
       nextSuppressionUid: state.nextSuppressionUid,
       summary,
     };
+  }
+
+  function inflateCellsFromRecord(record) {
+    if (Array.isArray(record.cells) && record.cells.length) {
+      return record.cells.map((cell, index) => ({
+        uid: cell.uid || `c${index + 1}`,
+        label: cell.label || `细胞 ${index + 1}`,
+        mask: cell.mask ? new Uint8Array(cell.mask) : null,
+        contour: clonePoints(cell.contour),
+        contourSource: cell.contourSource || "none",
+        backgroundEraseMask: cell.backgroundEraseMask ? new Uint8Array(cell.backgroundEraseMask) : null,
+        samBox: cloneBox(cell.samBox),
+      }));
+    }
+
+    const contour = clonePoints(record.cellContour);
+    if (!contour.length && !record.backgroundEraseMask) return [];
+    return [
+      {
+        uid: "c1",
+        label: "细胞 1",
+        mask: null,
+        contour,
+        contourSource: record.cellContourSource || "none",
+        backgroundEraseMask: record.backgroundEraseMask ? new Uint8Array(record.backgroundEraseMask) : null,
+        samBox: cloneBox(record.samBox),
+      },
+    ];
   }
 
   async function pruneHistory() {
@@ -3059,24 +3532,30 @@
       state.manualObjects = (record.manualObjects || []).map((object) => ({ ...object }));
       state.suppressedObjects = (record.suppressedObjects || []).map((object) => ({ ...object }));
       state.objects = [];
-      state.cellMask = null;
-      state.cellContour = (record.cellContour || []).map((point) => ({ ...point }));
-      state.cellControlPoints = (record.cellControlPoints || []).map((point) => ({ ...point }));
-      state.cellContourSource = record.cellContourSource || "none";
-      state.backgroundEraseMask = record.backgroundEraseMask ? new Uint8Array(record.backgroundEraseMask) : null;
+      state.cells = inflateCellsFromRecord(record);
+      state.selectedCellUid = record.selectedCellUid || state.cells[0]?.uid || null;
+      clearActiveCellState();
+      const activeCell = getSelectedCell();
+      if (activeCell && !activeCell.mask && activeCell.contour?.length >= 3) {
+        activeCell.mask = polygonToMask(activeCell.contour, decoded.width, decoded.height);
+      }
+      state.cells.forEach((cell) => {
+        if (!cell.mask && cell.contour?.length >= 3) {
+          cell.mask = polygonToMask(cell.contour, decoded.width, decoded.height);
+        }
+      });
+      loadCellIntoActiveState(getSelectedCell());
       state.eraseBrushSize = record.eraseBrushSize || state.eraseBrushSize;
       state.cellDrawMode = false;
       state.samPointMode = false;
       state.samBoxMode = false;
-      state.samBox = record.samBox || null;
-      state.tempSamBox = null;
-      state.samHoverPoint = null;
       state.maskEditMode = false;
       state.samBusy = false;
       state.roiMode = false;
       state.drawingRoi = false;
       state.correctionMode = "none";
       state.correctionHistory = (record.correctionHistory || []).map((item) => ({ ...item }));
+      state.nextCellUid = record.nextCellUid || state.cells.length + 1;
       state.nextManualUid = record.nextManualUid || state.manualObjects.length + 1;
       state.nextSuppressionUid = record.nextSuppressionUid || state.suppressedObjects.length + 1;
       state.currentHistoryId = record.id;

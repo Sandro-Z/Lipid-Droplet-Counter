@@ -31,14 +31,6 @@
         "to": "requirements.txt"
       },
       {
-        "from": "install_sam_dependencies.sh",
-        "to": "install_sam_dependencies.sh"
-      },
-      {
-        "from": "install_sam_dependencies.ps1",
-        "to": "install_sam_dependencies.ps1"
-      },
-      {
         "from": "droplet_segmenter.py",
         "to": "droplet_segmenter.py"
       },

@@ -1,0 +1,28 @@
+name: lipid-droplet-runtime-cpu
+channels:
+  - defaults
+variables:
+  # Force CPU-only execution for SAM and StarDist on machines without a GPU.
+  SAM_USE_GPU: "0"
+  PYTHONNOUSERSITE: "1"
+dependencies:
+  - python=3.10
+  - pip
+  - setuptools
+  - wheel
+  - nodejs>=20,<21
+  - pip:
+      - numpy==2.2.6
+      - Pillow==12.2.0
+      # CPU-only PyTorch wheels for SAM inference.
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==2.7.1
+      - torchvision==0.22.1
+      - segment-anything==1.0
+
+      # CPU-only StarDist runtime.
+      - tensorflow-cpu==2.21.0
+      - stardist==0.9.2
+      - csbdeep==0.8.2
+      - scipy==1.15.3
+      - scikit-image==0.25.2

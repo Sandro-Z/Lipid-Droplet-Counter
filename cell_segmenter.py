@@ -4,6 +4,8 @@ import io
 import json
 import os
 import sys
+import traceback
+from contextlib import suppress
 from pathlib import Path
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -65,7 +67,7 @@ def main():
             json.dumps(
                 {
                     "ok": False,
-                    "error": "未找到 SAM checkpoint。请设置 SAM_CHECKPOINT，或运行 install_sam_dependencies 脚本下载模型。",
+                    "error": "未找到 SAM checkpoint。请设置 SAM_CHECKPOINT，或将 sam_vit_b_01ec64.pth 放到项目的 models/ 目录。",
                     "detail": checkpoint or "",
                 },
                 ensure_ascii=False,
@@ -73,41 +75,154 @@ def main():
         )
         return
 
-    sam = sam_model_registry[model_type](checkpoint=checkpoint)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    sam.to(device=device)
-
-    predictor = SamPredictor(sam)
-    predictor.set_image(image)
-
     point_coords, point_labels = build_points(payload.get("points", []))
     box = build_box(payload.get("box"))
     if point_coords is None and box is None:
         print(json.dumps({"ok": False, "error": "SAM 至少需要一个点或一个框选区域"}, ensure_ascii=False))
         return
 
-    masks, scores, _ = predictor.predict(
-        point_coords=point_coords,
-        point_labels=point_labels,
-        box=box,
-        multimask_output=True,
-    )
-    best_index = choose_mask(masks, scores, point_coords, point_labels, box)
-    mask = masks[best_index].astype(np.uint8)
+    try:
+        result = run_sam_inference(
+            image=image,
+            checkpoint=checkpoint,
+            model_type=model_type,
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            payload=payload,
+        )
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "SAM 分割失败",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return
 
     print(
         json.dumps(
             {
                 "ok": True,
-                "width": int(mask.shape[1]),
-                "height": int(mask.shape[0]),
-                "score": float(scores[best_index]),
-                "maskStart": int(mask.ravel()[0]),
-                "maskRle": encode_rle(mask.ravel()),
+                "width": int(result["mask"].shape[1]),
+                "height": int(result["mask"].shape[0]),
+                "score": float(result["score"]),
+                "maskStart": int(result["mask"].ravel()[0]),
+                "maskRle": encode_rle(result["mask"].ravel()),
+                "device": result["device"],
+                "warning": result.get("warning", ""),
             },
             ensure_ascii=False,
         )
     )
+
+
+def run_sam_inference(image, checkpoint, model_type, point_coords, point_labels, box, payload):
+    last_error = None
+    warning = ""
+
+    for device in preferred_devices(payload):
+        try:
+            mask, score = predict_mask(
+                image=image,
+                checkpoint=checkpoint,
+                model_type=model_type,
+                point_coords=point_coords,
+                point_labels=point_labels,
+                box=box,
+                device=device,
+            )
+            return {
+                "mask": mask,
+                "score": score,
+                "device": device,
+                "warning": warning,
+            }
+        except Exception as exc:
+            last_error = exc
+            if device == "cuda" and should_retry_on_cpu(exc):
+                warning = f"检测到 CUDA 运行异常，已自动切换到 CPU：{type(exc).__name__}"
+                release_device_cache(device)
+                continue
+            raise
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("SAM 未执行任何推理尝试")
+
+
+def predict_mask(image, checkpoint, model_type, point_coords, point_labels, box, device):
+    sam = sam_model_registry[model_type](checkpoint=checkpoint)
+    sam.to(device=device)
+    sam.eval()
+    predictor = SamPredictor(sam)
+
+    try:
+        predictor.set_image(image)
+        masks, scores, _ = predictor.predict(
+            point_coords=point_coords,
+            point_labels=point_labels,
+            box=box,
+            multimask_output=True,
+        )
+        best_index = choose_mask(masks, scores, point_coords, point_labels, box)
+        return masks[best_index].astype(np.uint8), float(scores[best_index])
+    finally:
+        del predictor
+        del sam
+        release_device_cache(device)
+
+
+def preferred_devices(payload):
+    explicit_device = str(payload.get("device") or os.environ.get("SAM_DEVICE") or "").strip().lower()
+    if explicit_device == "cpu":
+        return ["cpu"]
+    if explicit_device == "cuda":
+        return ["cuda", "cpu"] if torch.cuda.is_available() else ["cpu"]
+
+    if explicit_device in {"cpu", "cuda"}:
+        return [explicit_device]
+
+    use_gpu_override = str(os.environ.get("SAM_USE_GPU", "")).strip().lower()
+    if use_gpu_override in {"0", "false", "no", "off"}:
+        return ["cpu"]
+    if use_gpu_override in {"1", "true", "yes", "on"}:
+        return ["cuda", "cpu"] if torch.cuda.is_available() else ["cpu"]
+
+    if torch.cuda.is_available():
+        return ["cuda", "cpu"]
+    return ["cpu"]
+
+
+def should_retry_on_cpu(exc):
+    message = f"{type(exc).__name__}: {exc}".lower()
+    cuda_tokens = (
+        "cuda",
+        "kernel image",
+        "cudnn",
+        "cublas",
+        "cufft",
+        "curand",
+        "cusolver",
+        "cusparse",
+        "nvrtc",
+        "driver",
+        "device-side",
+        "tensor descriptor",
+    )
+    return any(token in message for token in cuda_tokens)
+
+
+def release_device_cache(device):
+    if device != "cuda":
+        return
+    if torch.cuda.is_available():
+        with suppress(Exception):
+            torch.cuda.empty_cache()
 
 
 def resolve_checkpoint(payload):
@@ -216,4 +331,17 @@ def encode_rle(flat):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "SAM 运行异常",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "traceback": traceback.format_exc(limit=12),
+                },
+                ensure_ascii=False,
+            )
+        )

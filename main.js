@@ -66,29 +66,78 @@ function pythonProcessEnv() {
   };
 }
 
+function condaPythonExecutable() {
+  const condaPrefix = process.env.CONDA_PREFIX;
+  if (!condaPrefix) return null;
+
+  const candidates = process.platform === "win32"
+    ? [
+        path.join(condaPrefix, "python.exe"),
+        path.join(condaPrefix, "Scripts", "python.exe"),
+      ]
+    : [
+        path.join(condaPrefix, "bin", "python"),
+        path.join(condaPrefix, "bin", "python3"),
+      ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function isGenericPythonCommand(command) {
+  const normalized = String(command || "").trim().toLowerCase();
+  return normalized === "python" || normalized === "python3" || normalized === "py";
+}
+
+function envPythonInvocation(envPython, scriptPath) {
+  const trimmed = String(envPython || "").trim();
+  if (!trimmed) return null;
+  return {
+    command: trimmed,
+    args: trimmed.toLowerCase() === "py" ? ["-3", scriptPath] : [scriptPath],
+  };
+}
+
 function buildPythonInvocations(baseName, envVarName) {
+  const scriptPath = app.isPackaged
+    ? path.join(process.resourcesPath, `${baseName}.py`)
+    : path.join(__dirname, `${baseName}.py`);
+
   const envPython = process.env[envVarName];
-  if (envPython) {
-    const scriptPath = app.isPackaged
-      ? path.join(process.resourcesPath, `${baseName}.py`)
-      : path.join(__dirname, `${baseName}.py`);
-    return [{ command: envPython, args: envPython === "py" ? ["-3", scriptPath] : [scriptPath] }];
+  const invocations = [];
+
+  const condaPython = condaPythonExecutable();
+  if (envPython && !isGenericPythonCommand(envPython)) {
+    invocations.push(envPythonInvocation(envPython, scriptPath));
+  }
+
+  if (condaPython) {
+    invocations.push({ command: condaPython, args: [scriptPath] });
+  }
+
+  if (envPython && isGenericPythonCommand(envPython)) {
+    invocations.push(envPythonInvocation(envPython, scriptPath));
   }
 
   const bundledExecutable = bundledPythonExecutable(baseName);
   if (bundledExecutable) {
-    return [{ command: bundledExecutable, args: [] }];
+    invocations.push({ command: bundledExecutable, args: [] });
   }
 
-  const scriptPath = app.isPackaged
-    ? path.join(process.resourcesPath, `${baseName}.py`)
-    : path.join(__dirname, `${baseName}.py`);
   const commands = process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
+  for (const command of commands) {
+    invocations.push({
+      command,
+      args: command === "py" ? ["-3", scriptPath] : [scriptPath],
+    });
+  }
 
-  return commands.map((command) => ({
-    command,
-    args: command === "py" ? ["-3", scriptPath] : [scriptPath],
-  }));
+  const seen = new Set();
+  return invocations.filter(({ command, args }) => {
+    const key = `${command}::${args.join("\u0000")}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function runDropletSegment(payload) {
