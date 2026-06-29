@@ -1,4 +1,17 @@
 # Lipid-Droplet-Counter
+脂滴数量识别工具。
+
+## 运行
+首先将仓库克隆到本地;
+
+然后：
+
+```
+conda env create -f environment.yml
+conda activate lipid-stardist
+npm install
+npm start
+```
 
 ## Windows 打包
 
