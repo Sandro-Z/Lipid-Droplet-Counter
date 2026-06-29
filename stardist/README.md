@@ -29,10 +29,11 @@ python prepare_lipid_dataset.py \
   --image_dir dataset_raw/images \
   --csv_dir dataset_raw/csv \
   --out_dir prepared_lipid \
-  --radius_factor 0.45
+  --radius_factor 0.45 \
+  --overlap_strategy nearest-center
 ```
 
-Check every image under `prepared_lipid/qc`. Red circles should cover droplets without merging neighbors.
+Check every image under `prepared_lipid/qc`. Red circles should cover droplets without merging neighbors, especially in crowded clusters where `nearest-center` keeps touching droplets separated by their annotated centers.
 
 ## 4. Train
 
@@ -64,7 +65,7 @@ Inspect:
 - `eval_val/per_image_metrics.csv`
 - `eval_val/overlays/*.png`
 
-Pick the threshold pair with the lowest count error and acceptable visual overlays.
+Pick the threshold pair with the lowest count error and acceptable visual overlays. When crowded droplets are still merged, pay extra attention to `mean_under_count` and `mean_count_bias` so you can see whether the model is systematically missing objects instead of merely shifting total count.
 
 ## 6. Predict one image
 

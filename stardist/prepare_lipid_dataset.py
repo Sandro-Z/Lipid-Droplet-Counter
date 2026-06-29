@@ -70,26 +70,53 @@ def find_image_for_csv(csv_path: Path, df: pd.DataFrame, image_dir: Path) -> Pat
     raise FileNotFoundError(f"No matching image for {csv_path.name}. Tried: {candidates}")
 
 
-def make_label(shape_hw: tuple[int, int], df: pd.DataFrame, radius_factor: float, min_radius: float, max_radius: float | None) -> np.ndarray:
+def resolve_radius(diameter_px: float, radius_factor: float, min_radius: float, max_radius: float | None) -> float:
+    radius = max(min_radius, diameter_px * radius_factor)
+    if max_radius is not None:
+        radius = min(max_radius, radius)
+    return float(radius)
+
+
+def make_label(
+    shape_hw: tuple[int, int],
+    df: pd.DataFrame,
+    radius_factor: float,
+    min_radius: float,
+    max_radius: float | None,
+    overlap_strategy: str,
+) -> np.ndarray:
     h, w = shape_hw
     dtype = np.uint16 if len(df) < np.iinfo(np.uint16).max else np.uint32
     label = np.zeros((h, w), dtype=dtype)
 
     work = df.copy()
     work["diameter_px"] = pd.to_numeric(work["diameter_px"], errors="coerce")
-    work = work.sort_values("diameter_px", ascending=False).reset_index(drop=True)
+    work = work.reset_index(drop=True)
 
+    if overlap_strategy == "preserve-largest":
+        work = work.sort_values("diameter_px", ascending=False).reset_index(drop=True)
+        for obj_id, row in enumerate(work.itertuples(index=False), start=1):
+            x = float(getattr(row, "center_x_px"))
+            y = float(getattr(row, "center_y_px"))
+            d = float(getattr(row, "diameter_px"))
+            r = resolve_radius(d, radius_factor, min_radius, max_radius)
+            rr, cc = disk((y, x), r, shape=(h, w))
+            # Historical behavior: once a pixel is assigned, later objects cannot overwrite it.
+            empty = label[rr, cc] == 0
+            label[rr[empty], cc[empty]] = obj_id
+        return label
+
+    best_score = np.full((h, w), np.inf, dtype=np.float32)
     for obj_id, row in enumerate(work.itertuples(index=False), start=1):
         x = float(getattr(row, "center_x_px"))
         y = float(getattr(row, "center_y_px"))
         d = float(getattr(row, "diameter_px"))
-        r = max(min_radius, d * radius_factor)
-        if max_radius is not None:
-            r = min(max_radius, r)
+        r = resolve_radius(d, radius_factor, min_radius, max_radius)
         rr, cc = disk((y, x), r, shape=(h, w))
-        # Do not overwrite previous objects. This prevents two close droplets from becoming one label.
-        empty = label[rr, cc] == 0
-        label[rr[empty], cc[empty]] = obj_id
+        score = ((rr.astype(np.float32) - y) ** 2 + (cc.astype(np.float32) - x) ** 2) / max(r * r, 1e-6)
+        better = score < best_score[rr, cc]
+        label[rr[better], cc[better]] = obj_id
+        best_score[rr[better], cc[better]] = score[better]
     return label
 
 
@@ -121,6 +148,12 @@ def main() -> None:
     ap.add_argument("--radius_factor", type=float, default=0.45, help="label radius = diameter_px * radius_factor; 0.45 avoids many overlaps")
     ap.add_argument("--min_radius", type=float, default=2.0)
     ap.add_argument("--max_radius", type=float, default=8.0)
+    ap.add_argument(
+        "--overlap_strategy",
+        choices=["nearest-center", "preserve-largest"],
+        default="nearest-center",
+        help="nearest-center resolves overlapping disks by the closest annotated center, which is usually better for crowded droplets",
+    )
     args = ap.parse_args()
 
     out_images = args.out_dir / "images"
@@ -139,7 +172,7 @@ def main() -> None:
         img_path = find_image_for_csv(csv_path, df, args.image_dir)
         img = iio.imread(img_path)
         h, w = img.shape[:2]
-        label = make_label((h, w), df, args.radius_factor, args.min_radius, args.max_radius)
+        label = make_label((h, w), df, args.radius_factor, args.min_radius, args.max_radius, args.overlap_strategy)
 
         copied_img = out_images / img_path.name
         if img_path.resolve() != copied_img.resolve():

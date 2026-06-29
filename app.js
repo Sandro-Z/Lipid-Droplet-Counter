@@ -1,9 +1,16 @@
 (() => {
+  const modelDefaults = {
+    modelName: "lipid_droplet_stardist_dense_ft2",
+    modelLabel: "dense_ft2",
+    probabilityThreshold: 0.05,
+    nmsThreshold: 0.95,
+  };
+
   const defaults = {
     mode: "brightfield",
     channel: "luma",
-    probabilityThreshold: 0.05,
-    nmsThreshold: 0.05,
+    probabilityThreshold: modelDefaults.probabilityThreshold,
+    nmsThreshold: modelDefaults.nmsThreshold,
     backgroundRadius: 20,
     minDiameter: 3,
     maxDiameter: 58,
@@ -62,8 +69,8 @@
     didPaintMask: false,
     threshold: null,
     modelInfo: {
-      modelName: "lipid_droplet_stardist_dense_ft2",
-      modelLabel: "dense_ft2",
+      modelName: modelDefaults.modelName,
+      modelLabel: modelDefaults.modelLabel,
       probThresh: defaults.probabilityThreshold,
       nmsThresh: defaults.nmsThreshold,
     },
@@ -345,8 +352,8 @@
       state.settings = { ...defaults, micronPerPixel: keepMicron };
       state.threshold = null;
       state.modelInfo = {
-        modelName: "lipid_droplet_stardist_dense_ft2",
-        modelLabel: "dense_ft2",
+        modelName: modelDefaults.modelName,
+        modelLabel: modelDefaults.modelLabel,
         probThresh: state.settings.probabilityThreshold,
         nmsThresh: state.settings.nmsThreshold,
       };
@@ -432,8 +439,8 @@
       setCorrectionMode("none", false);
       state.threshold = null;
       state.modelInfo = {
-        modelName: "lipid_droplet_stardist_dense_ft2",
-        modelLabel: "dense_ft2",
+        modelName: modelDefaults.modelName,
+        modelLabel: modelDefaults.modelLabel,
         probThresh: state.settings.probabilityThreshold,
         nmsThresh: state.settings.nmsThreshold,
       };
@@ -517,7 +524,7 @@
       await nextFrame();
       const signal = buildSignal(intensity, background, settings.mode);
       const histogram = buildHistogram(signal, width, bounds);
-      const result = await detectDroplets(bounds, settings);
+      const result = await detectDroplets(bounds, settings, intensity, signal, width, height);
 
       state.signal = signal;
       state.mask = result.mask;
@@ -534,9 +541,12 @@
       drawHistogram(histogram, result.modelInfo);
       updateResults();
       updateButtonState();
+      const splitNote = result.splitCount
+        ? `，拥挤拆分新增 ${result.splitCount} 个对象`
+        : "";
       setBusy(
         false,
-        `完成：${result.modelInfo.modelLabel} 识别 ${state.autoObjects.length} 个对象，当前计数 ${state.objects.length} 个`
+        `完成：${result.modelInfo.modelLabel} 识别 ${state.autoObjects.length} 个对象${splitNote}，当前计数 ${state.objects.length} 个`
       );
       saveHistoryDebounced();
     } catch (error) {
@@ -699,20 +709,22 @@
     }
     return 255;
   }
-  async function detectDroplets(bounds, settings) {
+  async function detectDroplets(bounds, settings, intensity, signal, width, height) {
     if (!window.lipidDropletSegmentation?.stardistPredict) {
       throw new Error("未找到 StarDist 推理桥接");
     }
 
     const result = await window.lipidDropletSegmentation.stardistPredict({
       imagePng: sourceImageDataUrl(),
+      analysisPng: grayscaleBufferToDataUrl(signal, width, height),
+      measurementPng: grayscaleBufferToDataUrl(intensity, width, height),
       bounds,
       channel: settings.channel,
       minDiameter: settings.minDiameter,
       maxDiameter: settings.maxDiameter,
       probThresh: settings.probabilityThreshold,
       nmsThresh: settings.nmsThreshold,
-      modelName: "lipid_droplet_stardist_dense_ft2",
+      modelName: modelDefaults.modelName,
     });
 
     if (!result?.ok) {
@@ -722,9 +734,10 @@
     return {
       mask: decodeMaskRle(result.maskStart, result.maskRle, result.width, result.height),
       objects: result.objects || [],
+      splitCount: Number.isFinite(result.splitCount) ? result.splitCount : 0,
       modelInfo: {
-        modelName: result.modelName || "lipid_droplet_stardist_dense_ft2",
-        modelLabel: result.modelLabel || "dense_ft2",
+        modelName: result.modelName || modelDefaults.modelName,
+        modelLabel: result.modelLabel || modelDefaults.modelLabel,
         probThresh: Number.isFinite(result.probThresh) ? result.probThresh : settings.probabilityThreshold,
         nmsThresh: Number.isFinite(result.nmsThresh) ? result.nmsThresh : settings.nmsThreshold,
       },
@@ -1300,6 +1313,23 @@
     canvas.height = state.source.height;
     const ctx = canvas.getContext("2d");
     ctx.putImageData(state.source.imageData, 0, 0);
+    return canvas.toDataURL("image/png");
+  }
+
+  function grayscaleBufferToDataUrl(buffer, width, height) {
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    const imageData = ctx.createImageData(width, height);
+    for (let i = 0, p = 0; i < buffer.length; i += 1, p += 4) {
+      const value = buffer[i];
+      imageData.data[p] = value;
+      imageData.data[p + 1] = value;
+      imageData.data[p + 2] = value;
+      imageData.data[p + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
     return canvas.toDataURL("image/png");
   }
 
@@ -2571,8 +2601,11 @@
       ["droplet_cell_area_ratio", summary.areaRatio.toFixed(6), ""],
       ["manual_added", state.manualObjects.length, ""],
       ["manual_removed", state.suppressedObjects.length, ""],
-      ["droplet_model_name", state.modelInfo?.modelName || "lipid_droplet_stardist_dense_ft2", ""],
-      ["droplet_model_label", state.modelInfo?.modelLabel || "dense_ft2", ""],
+      ["input_mode", state.settings.mode, ""],
+      ["input_channel", state.settings.channel, ""],
+      ["background_radius_px", Math.round(state.settings.backgroundRadius), "px"],
+      ["droplet_model_name", state.modelInfo?.modelName || modelDefaults.modelName, ""],
+      ["droplet_model_label", state.modelInfo?.modelLabel || modelDefaults.modelLabel, ""],
       ["prob_threshold", state.modelInfo?.probThresh ?? state.settings.probabilityThreshold, ""],
       ["nms_threshold", state.modelInfo?.nmsThresh ?? state.settings.nmsThreshold, ""],
       ["roi_x", state.bounds ? state.bounds.x0 : "", "px"],
@@ -3017,8 +3050,8 @@
       state.histogram = null;
       state.threshold = null;
       state.modelInfo = {
-        modelName: "lipid_droplet_stardist_dense_ft2",
-        modelLabel: "dense_ft2",
+        modelName: modelDefaults.modelName,
+        modelLabel: modelDefaults.modelLabel,
         probThresh: state.settings.probabilityThreshold,
         nmsThresh: state.settings.nmsThreshold,
       };

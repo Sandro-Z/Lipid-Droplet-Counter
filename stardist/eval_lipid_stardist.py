@@ -85,6 +85,7 @@ def main() -> None:
                 y_pred, details = model.predict_instances(x, prob_thresh=prob, nms_thresh=nms)
                 gt_count = int(y_true.max())
                 pred_count = int(y_pred.max())
+                count_error = pred_count - gt_count
                 m = matching(y_true, y_pred, thresh=args.iou_thresh)
                 rows.append({
                     "image_name": getattr(r, "image_name", Path(r.image).name),
@@ -93,9 +94,11 @@ def main() -> None:
                     "nms_thresh": nms,
                     "gt_count": gt_count,
                     "pred_count": pred_count,
-                    "count_error": pred_count - gt_count,
-                    "abs_count_error": abs(pred_count - gt_count),
-                    "abs_pct_error": abs(pred_count - gt_count) / max(gt_count, 1),
+                    "count_error": count_error,
+                    "undercount": max(-count_error, 0),
+                    "overcount": max(count_error, 0),
+                    "abs_count_error": abs(count_error),
+                    "abs_pct_error": abs(count_error) / max(gt_count, 1),
                     "precision_iou": float(m.precision),
                     "recall_iou": float(m.recall),
                     "f1_iou": float(m.f1),
@@ -107,13 +110,17 @@ def main() -> None:
     result.to_csv(result_path, index=False)
 
     summary = (result.groupby(["prob_thresh", "nms_thresh"])
-               .agg(mean_abs_error=("abs_count_error", "mean"),
+               .agg(mean_count_bias=("count_error", "mean"),
+                    abs_mean_count_bias=("count_error", lambda s: float(np.mean(np.abs(s.to_numpy(dtype=np.float32))))),
+                    mean_under_count=("undercount", "mean"),
+                    mean_over_count=("overcount", "mean"),
+                    mean_abs_error=("abs_count_error", "mean"),
                     mean_abs_pct_error=("abs_pct_error", "mean"),
                     mean_precision_iou=("precision_iou", "mean"),
                     mean_recall_iou=("recall_iou", "mean"),
                     mean_f1_iou=("f1_iou", "mean"))
                .reset_index()
-               .sort_values(["mean_abs_error", "mean_abs_pct_error"], ascending=True))
+               .sort_values(["mean_abs_error", "abs_mean_count_bias", "mean_under_count", "mean_abs_pct_error"], ascending=True))
     summary_path = args.out_dir / "threshold_sweep_summary.csv"
     summary.to_csv(summary_path, index=False)
     best = summary.iloc[0]

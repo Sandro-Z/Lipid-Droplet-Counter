@@ -6,3 +6,6 @@
 /build/pyinstaller/
 /runtime/windows/python/cell_segmenter/
 /runtime/windows/python/droplet_segmenter/
+__pycache__/
+*.py[cod]
+models/sam_vit_b_01ec64.pth

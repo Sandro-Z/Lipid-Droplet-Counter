@@ -252,6 +252,7 @@ def optimize_thresholds_for_counts(
     rows = []
     for prob in prob_values:
         for nms in nms_values:
+            count_errors = []
             abs_errors = []
             abs_pct_errors = []
             f1s = []
@@ -262,6 +263,8 @@ def optimize_thresholds_for_counts(
                 gt_count = int(y_true.max())
                 pred_count = int(y_pred.max())
                 m = matching(y_true, y_pred, thresh=iou_thresh)
+                count_error = pred_count - gt_count
+                count_errors.append(count_error)
                 abs_errors.append(abs(pred_count - gt_count))
                 abs_pct_errors.append(abs(pred_count - gt_count) / max(gt_count, 1))
                 precisions.append(float(m.precision))
@@ -270,6 +273,10 @@ def optimize_thresholds_for_counts(
             rows.append({
                 "prob_thresh": prob,
                 "nms_thresh": nms,
+                "mean_count_bias": float(np.mean(count_errors)),
+                "abs_mean_count_bias": float(np.mean(np.abs(count_errors))),
+                "mean_under_count": float(np.mean([max(-err, 0) for err in count_errors])),
+                "mean_over_count": float(np.mean([max(err, 0) for err in count_errors])),
                 "mean_abs_error": float(np.mean(abs_errors)),
                 "mean_abs_pct_error": float(np.mean(abs_pct_errors)),
                 "mean_precision_iou": float(np.mean(precisions)),
@@ -278,8 +285,8 @@ def optimize_thresholds_for_counts(
             })
 
     summary = pd.DataFrame(rows).sort_values(
-        ["mean_abs_error", "mean_abs_pct_error", "mean_f1_iou"],
-        ascending=[True, True, False],
+        ["mean_abs_error", "abs_mean_count_bias", "mean_under_count", "mean_abs_pct_error", "mean_f1_iou"],
+        ascending=[True, True, True, True, False],
     )
     summary_path = out_dir / "val_threshold_sweep.csv"
     summary.to_csv(summary_path, index=False)
