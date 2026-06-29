@@ -61,12 +61,12 @@
               <span class="badge">dense_ft2</span>
             </div>
             <label class="range-field">
-              <span>概率阈值 <b id="probabilityValue">0.30</b></span>
-              <input id="probabilityInput" type="range" min="0.05" max="0.95" value="0.3" step="0.05" />
+              <span>概率阈值 <b id="probabilityValue">0.05</b></span>
+              <input id="probabilityInput" type="range" min="0.05" max="0.95" value="0.05" step="0.05" />
             </label>
             <label class="range-field">
-              <span>NMS 阈值 <b id="nmsValue">0.20</b></span>
-              <input id="nmsInput" type="range" min="0.05" max="0.95" value="0.2" step="0.05" />
+              <span>NMS 阈值 <b id="nmsValue">0.05</b></span>
+              <input id="nmsInput" type="range" min="0.05" max="0.95" value="0.05" step="0.05" />
             </label>
             <label class="range-field">
               <span>辅助背景半径 <b id="backgroundValue">20 px</b></span>
@@ -81,7 +81,7 @@
             <div class="number-grid">
               <label class="field">
                 <span>最小直径</span>
-                <input id="minDiameterInput" type="number" min="1" max="999" value="6" />
+                <input id="minDiameterInput" type="number" min="1" max="999" value="3" />
               </label>
               <label class="field">
                 <span>最大直径</span>
@@ -107,6 +107,10 @@
             <label class="range-field">
               <span>叠加 <b id="overlayValue">62%</b></span>
               <input id="overlayInput" type="range" min="0" max="100" value="62" step="1" />
+            </label>
+            <label class="range-field">
+              <span>脂滴标记大小 <b id="markerSizeValue">100%</b></span>
+              <input id="markerSizeInput" type="range" min="40" max="300" value="100" step="5" />
             </label>
             <label class="switch">
               <input id="labelsInput" type="checkbox" />

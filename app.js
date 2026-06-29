@@ -2,13 +2,14 @@
   const defaults = {
     mode: "brightfield",
     channel: "luma",
-    probabilityThreshold: 0.3,
-    nmsThreshold: 0.2,
+    probabilityThreshold: 0.05,
+    nmsThreshold: 0.05,
     backgroundRadius: 20,
-    minDiameter: 6,
+    minDiameter: 3,
     maxDiameter: 58,
     edgeMargin: 4,
     overlayOpacity: 0.62,
+    markerScale: 1,
     zoom: 100,
     showLabels: false,
     manualDiameter: 12,
@@ -118,6 +119,8 @@
     "zoomValue",
     "overlayInput",
     "overlayValue",
+    "markerSizeInput",
+    "markerSizeValue",
     "labelsInput",
     "manualBadge",
     "manualDiameterInput",
@@ -255,6 +258,12 @@
 
     els.overlayInput.addEventListener("input", () => {
       state.settings.overlayOpacity = Number(els.overlayInput.value) / 100;
+      syncReadouts();
+      renderCanvas();
+    });
+
+    els.markerSizeInput.addEventListener("input", () => {
+      state.settings.markerScale = clamp(Number(els.markerSizeInput.value) / 100 || defaults.markerScale, 0.4, 3);
       syncReadouts();
       renderCanvas();
     });
@@ -547,6 +556,7 @@
       maxDiameter: Math.max(2, Number(els.maxDiameterInput.value) || defaults.maxDiameter),
       edgeMargin: clamp(Math.round(Number(els.edgeInput.value) || 0), 0, 80),
       overlayOpacity: clamp(Number(els.overlayInput.value) / 100, 0, 1),
+      markerScale: clamp(Number(els.markerSizeInput.value) / 100 || defaults.markerScale, 0.4, 3),
       zoom: clamp(Number(els.zoomInput.value) || 100, 10, 800),
       showLabels: els.labelsInput.checked,
       manualDiameter: clamp(Math.round(Number(els.manualDiameterInput.value) || defaults.manualDiameter), 3, 90),
@@ -1474,15 +1484,26 @@
     ctx.restore();
   }
 
+  function getDropletMarkerScale() {
+    return clamp(Number(state.settings.markerScale) || defaults.markerScale, 0.4, 3);
+  }
+
+  function getDropletMarkerRadius(object) {
+    const baseRadius = Math.max(4, object.equivalentDiameter / 2 + 2);
+    return Math.max(2, baseRadius * getDropletMarkerScale());
+  }
+
   function drawObjectOverlay(ctx) {
     if (!state.objects.length) return;
+    const markerScale = getDropletMarkerScale();
+    const baseLineWidth = Math.max(2, Math.round(Math.min(state.source.width, state.source.height) / 900));
     ctx.save();
-    ctx.lineWidth = Math.max(2, Math.round(Math.min(state.source.width, state.source.height) / 900));
+    ctx.lineWidth = Math.max(1, baseLineWidth * Math.sqrt(markerScale));
     ctx.font = `${Math.max(11, Math.round(state.source.width / 180))}px ui-sans-serif, system-ui`;
     ctx.textBaseline = "middle";
 
     state.objects.forEach((object) => {
-      const radius = object.equivalentDiameter / 2 + 2;
+      const radius = getDropletMarkerRadius(object);
       const isManual = object.source === "manual";
       const counted = isObjectCounted(object);
       ctx.globalAlpha = counted ? 1 : 0.35;
@@ -1492,7 +1513,7 @@
       ctx.arc(object.x, object.y, radius, 0, Math.PI * 2);
       ctx.stroke();
       if (isManual) {
-        const tick = Math.max(4, radius * 0.42);
+        const tick = Math.max(2, 4 * markerScale, radius * 0.42);
         ctx.beginPath();
         ctx.moveTo(object.x - tick, object.y);
         ctx.lineTo(object.x + tick, object.y);
@@ -2675,7 +2696,9 @@
   function drawExportDropletMarkers(ctx) {
     if (!state.source) return;
     const { width, height } = state.source;
-    const lineWidth = Math.max(2, Math.round(Math.min(width, height) / 720));
+    const markerScale = getDropletMarkerScale();
+    const baseLineWidth = Math.max(2, Math.round(Math.min(width, height) / 720));
+    const lineWidth = Math.max(1, baseLineWidth * Math.sqrt(markerScale));
     const fontSize = Math.max(12, Math.round(width / 140));
     ctx.save();
     ctx.lineWidth = lineWidth;
@@ -2684,7 +2707,7 @@
     ctx.lineJoin = "round";
 
     state.objects.forEach((object) => {
-      const radius = Math.max(4, object.equivalentDiameter / 2 + 2);
+      const radius = getDropletMarkerRadius(object);
       const isManual = object.source === "manual";
       const color = isManual ? "#22c55e" : "#ffb000";
       ctx.globalAlpha = isObjectCounted(object) ? 1 : 0.45;
@@ -2693,11 +2716,12 @@
       ctx.beginPath();
       ctx.arc(object.x, object.y, radius, 0, Math.PI * 2);
       ctx.stroke();
+      const tick = Math.min(6 * markerScale, radius * 0.35);
       ctx.beginPath();
-      ctx.moveTo(object.x - Math.min(6, radius * 0.35), object.y);
-      ctx.lineTo(object.x + Math.min(6, radius * 0.35), object.y);
-      ctx.moveTo(object.x, object.y - Math.min(6, radius * 0.35));
-      ctx.lineTo(object.x, object.y + Math.min(6, radius * 0.35));
+      ctx.moveTo(object.x - tick, object.y);
+      ctx.lineTo(object.x + tick, object.y);
+      ctx.moveTo(object.x, object.y - tick);
+      ctx.lineTo(object.x, object.y + tick);
       ctx.stroke();
       ctx.lineWidth = Math.max(3, lineWidth + 2);
       ctx.strokeStyle = "rgba(255,255,255,0.9)";
@@ -2790,6 +2814,7 @@
     els.maxDiameterInput.value = String(settings.maxDiameter);
     els.edgeInput.value = String(settings.edgeMargin);
     els.overlayInput.value = String(Math.round(settings.overlayOpacity * 100));
+    els.markerSizeInput.value = String(Math.round((settings.markerScale || defaults.markerScale) * 100));
     els.zoomInput.value = String(settings.zoom);
     els.labelsInput.checked = settings.showLabels;
     els.manualDiameterInput.value = String(settings.manualDiameter);
@@ -2804,6 +2829,7 @@
     els.backgroundValue.textContent = `${Math.round(state.settings.backgroundRadius)} px`;
     els.edgeValue.textContent = `${Math.round(state.settings.edgeMargin)} px`;
     els.overlayValue.textContent = `${Math.round(state.settings.overlayOpacity * 100)}%`;
+    els.markerSizeValue.textContent = `${Math.round(getDropletMarkerScale() * 100)}%`;
     els.zoomValue.textContent = `${Math.round(state.settings.zoom)}%`;
     els.manualDiameterValue.textContent = `${Math.round(state.settings.manualDiameter)} px`;
     els.eraseBrushValue.textContent = `${Math.round(state.eraseBrushSize)} px`;
