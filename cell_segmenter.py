@@ -4,8 +4,10 @@ import io
 import json
 import os
 import sys
+from pathlib import Path
 
-SCRIPT_ROOT = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_ROOT = Path(__file__).resolve().parent
+RESOURCE_ROOT = Path(os.environ.get("LDC_RESOURCE_ROOT") or SCRIPT_ROOT)
 
 
 def user_data_dir():
@@ -22,6 +24,7 @@ def add_dependency_paths():
     candidates = [
         os.environ.get("SAM_PYTHONPATH"),
         os.path.join(SCRIPT_ROOT, "python_modules"),
+        os.path.join(RESOURCE_ROOT, "python_modules"),
         os.path.join(os.getcwd(), "python_modules"),
         os.path.join(user_data_dir(), "python_modules"),
     ]
@@ -111,16 +114,17 @@ def resolve_checkpoint(payload):
     checkpoint = payload.get("checkpoint") or os.environ.get("SAM_CHECKPOINT")
     if checkpoint:
         return checkpoint
-    user_model = os.path.join(user_data_dir(), "models", "sam_vit_b_01ec64.pth")
+    user_model = Path(user_data_dir()) / "models" / "sam_vit_b_01ec64.pth"
     candidates = [
-        os.path.join(SCRIPT_ROOT, "models", "sam_vit_b_01ec64.pth"),
+        RESOURCE_ROOT / "models" / "sam_vit_b_01ec64.pth",
+        SCRIPT_ROOT / "models" / "sam_vit_b_01ec64.pth",
         user_model,
-        os.path.join(os.getcwd(), "models", "sam_vit_b_01ec64.pth"),
+        Path(os.getcwd()) / "models" / "sam_vit_b_01ec64.pth",
     ]
     for item in candidates:
-        if os.path.exists(item):
-            return item
-    return candidates[0]
+        if item.exists():
+            return os.fspath(item)
+    return os.fspath(candidates[0])
 
 
 def decode_image(data_url):

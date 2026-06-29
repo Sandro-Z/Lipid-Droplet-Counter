@@ -6,7 +6,9 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "build:win": "electron-builder --win portable --x64",
+    "build:python:win": "powershell -ExecutionPolicy Bypass -File packaging/windows/build-python.ps1",
+    "build:electron:win": "electron-builder --win portable --x64",
+    "build:win": "powershell -ExecutionPolicy Bypass -File packaging/windows/build-win.ps1",
     "build:mac": "electron-builder --mac dmg --arm64"
   },
   "build": {
@@ -43,6 +45,10 @@
       {
         "from": "models",
         "to": "models"
+      },
+      {
+        "from": "runtime/windows/python",
+        "to": "python"
       }
     ],
     "directories": {

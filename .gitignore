@@ -1,3 +1,8 @@
 /stardist/dataset_raw/
 /node_modules/
 /stardist/prepared_lipid/
+/release/
+/.venv-win-build/
+/build/pyinstaller/
+/runtime/windows/python/cell_segmenter/
+/runtime/windows/python/droplet_segmenter/

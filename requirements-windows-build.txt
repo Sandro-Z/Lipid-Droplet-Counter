@@ -1,0 +1,15 @@
+numpy
+Pillow
+torch
+torchvision
+tensorflow>=2
+stardist
+csbdeep
+pandas
+scikit-image
+tifffile
+imageio
+matplotlib
+tqdm
+segment-anything
+pyinstaller

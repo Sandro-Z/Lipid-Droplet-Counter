@@ -42,28 +42,63 @@ app.on("window-all-closed", () => {
 
 ipcMain.handle("cell-sam-segment", async (_event, payload) => runSamSegment(payload));
 ipcMain.handle("droplet-stardist-segment", async (_event, payload) => runDropletSegment(payload));
-function runDropletSegment(payload) {
+
+function appResourceRoot() {
+  return app.isPackaged ? process.resourcesPath : __dirname;
+}
+
+function bundledPythonExecutable(baseName) {
+  const extension = process.platform === "win32" ? ".exe" : "";
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, "python", baseName, `${baseName}${extension}`)]
+    : [
+        path.join(__dirname, "python", baseName, `${baseName}${extension}`),
+        path.join(__dirname, "runtime", "windows", "python", baseName, `${baseName}${extension}`),
+      ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
+
+function pythonProcessEnv() {
+  return {
+    ...process.env,
+    LDC_RESOURCE_ROOT: appResourceRoot(),
+  };
+}
+
+function buildPythonInvocations(baseName, envVarName) {
+  const envPython = process.env[envVarName];
+  if (envPython) {
+    const scriptPath = app.isPackaged
+      ? path.join(process.resourcesPath, `${baseName}.py`)
+      : path.join(__dirname, `${baseName}.py`);
+    return [{ command: envPython, args: envPython === "py" ? ["-3", scriptPath] : [scriptPath] }];
+  }
+
+  const bundledExecutable = bundledPythonExecutable(baseName);
+  if (bundledExecutable) {
+    return [{ command: bundledExecutable, args: [] }];
+  }
+
   const scriptPath = app.isPackaged
-    ? path.join(process.resourcesPath, "droplet_segmenter.py")
-    : path.join(__dirname, "droplet_segmenter.py");
+    ? path.join(process.resourcesPath, `${baseName}.py`)
+    : path.join(__dirname, `${baseName}.py`);
+  const commands = process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
 
-  const envPython = process.env.STARDIST_PYTHON;
-  const candidates = envPython
-    ? [envPython]
-    : process.platform === "win32"
-      ? ["python", "py"]
-      : ["python3", "python"];
+  return commands.map((command) => ({
+    command,
+    args: command === "py" ? ["-3", scriptPath] : [scriptPath],
+  }));
+}
 
-  return tryPython(candidates, scriptPath, payload, 180000);
+function runDropletSegment(payload) {
+  const invocations = buildPythonInvocations("droplet_segmenter", "STARDIST_PYTHON");
+  return tryPython(invocations, payload, 180000);
 }
 
 function runSamSegment(payload) {
-  const scriptPath = app.isPackaged
-    ? path.join(process.resourcesPath, "cell_segmenter.py")
-    : path.join(__dirname, "cell_segmenter.py");
-  const candidates = process.platform === "win32" ? ["python", "py"] : ["python3", "python"];
-
-  return tryPython(candidates, scriptPath, payload);
+  const invocations = buildPythonInvocations("cell_segmenter", "SAM_PYTHON");
+  return tryPython(invocations, payload);
 }
 
 // async function tryPython(candidates, scriptPath, payload) {
@@ -132,11 +167,10 @@ function runSamSegment(payload) {
 //     }
 //   });
 // }
-async function tryPython(candidates, scriptPath, payload, timeoutMs = 20000) {
+async function tryPython(invocations, payload, timeoutMs = 20000) {
   let lastError = "未找到 Python";
-  for (const command of candidates) {
+  for (const { command, args } of invocations) {
     try {
-      const args = command === "py" ? ["-3", scriptPath] : [scriptPath];
       return await runPythonProcess(command, args, payload, timeoutMs);
     } catch (error) {
       lastError = error.message || String(error);
@@ -204,7 +238,12 @@ function parsePythonJson(stdout) {
 
 function runPythonProcess(command, args, payload, timeoutMs = 20000) {
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      cwd: appResourceRoot(),
+      env: pythonProcessEnv(),
+      windowsHide: true,
+    });
 
     let stdout = "";
     let stderr = "";

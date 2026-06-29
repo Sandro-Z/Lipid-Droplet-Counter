@@ -31,11 +31,22 @@ from skimage.measure import regionprops
 from stardist.models import StarDist2D
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
+RESOURCE_ROOT = Path(os.environ.get("LDC_RESOURCE_ROOT") or SCRIPT_ROOT)
 DEFAULT_MODEL_NAME = "lipid_droplet_stardist_dense_ft2"
-DEFAULT_MODEL_BASEDIR = SCRIPT_ROOT / "models"
+DEFAULT_MODEL_BASEDIR = RESOURCE_ROOT / "models"
 DEFAULT_PROB_THRESH = 0.3
 DEFAULT_NMS_THRESH = 0.2
 MODEL_LABEL_PREFIX = "lipid_droplet_stardist_"
+
+
+def resolve_resource_path(value: str) -> Path:
+    candidate = Path(value)
+    if candidate.is_absolute():
+        return candidate
+    resource_candidate = RESOURCE_ROOT / candidate
+    if resource_candidate.exists():
+        return resource_candidate
+    return SCRIPT_ROOT / candidate
 
 
 def decode_image(data_url: str) -> np.ndarray:
@@ -78,16 +89,12 @@ def resolve_model(payload: dict) -> tuple[Path, str, Path]:
     model_path = payload.get("modelPath") or os.environ.get("STARDIST_MODEL_PATH")
 
     if model_path:
-        resolved_path = Path(model_path)
-        if not resolved_path.is_absolute():
-            resolved_path = SCRIPT_ROOT / resolved_path
+        resolved_path = resolve_resource_path(model_path)
         if resolved_path.is_dir():
             return resolved_path.parent, resolved_path.name, resolved_path
 
     if model_dir:
-        resolved_dir = Path(model_dir)
-        if not resolved_dir.is_absolute():
-            resolved_dir = SCRIPT_ROOT / resolved_dir
+        resolved_dir = resolve_resource_path(model_dir)
     else:
         resolved_dir = DEFAULT_MODEL_BASEDIR
 
