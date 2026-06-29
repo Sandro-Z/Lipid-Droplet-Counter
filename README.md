@@ -1,17 +1,37 @@
 # Lipid-Droplet-Counter
 脂滴数量识别工具。
 
+## 系统要求
+- conda
+
+- npm
+
 ## 运行
 首先将仓库克隆到本地;
 
-然后：
+然后选择一个 Python 运行环境：
 
+CPU 运行环境：
 ```
-conda env create -f environment.yml
-conda activate lipid-stardist
+conda env create -f environment-runtime.yml
+conda activate lipid-droplet-runtime
+```
+
+GPU 运行环境：
+```
+conda env create -f environment-runtime-gpu.yml
+conda activate lipid-droplet-runtime-gpu
+```
+
+GPU 运行环境需要 NVIDIA GPU 和可用的 NVIDIA 驱动。该环境会设置 `STARDIST_USE_GPU=1`，允许 StarDist 脂滴识别使用 TensorFlow GPU；SAM 会在 PyTorch 检测到 CUDA 时自动使用 GPU。
+
+最后启动桌面应用：
+```
 npm install
 npm start
 ```
+
+`environment-runtime.yml` 和 `environment-runtime-gpu.yml` 只包含桌面应用运行所需的 Python 推理依赖；训练、评估或数据准备模型时仍可使用 `environment.yml` / `stardist/requirements.txt`。
 
 ## Windows 打包
 
